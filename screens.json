@@ -1,0 +1,30 @@
+{
+  "screens": [
+    {
+      "id": "screen_A_left_dino",
+      "name": "Screen A (Left Wall - Logo to Dinosaur Caravan)",
+      "assigned_clip": "E:\\betweenthenotes\\drone_animation_project\\preview_720p\\dinosaur_caravan_continuous_review_720p.mp4",
+      "start_time": 0.0,
+      "fit": "cover",
+      "corners": [
+        [80.0, 280.0],
+        [460.0, 390.0],
+        [460.0, 590.0],
+        [80.0, 540.0]
+      ]
+    },
+    {
+      "id": "screen_B_right_series",
+      "name": "Screen B (Right Wall - Cheetah to Romcom to Commercial to Noise)",
+      "assigned_clip": "C:\\Users\\sayan\\flow-mcp-out\\StudioScreens90s\\clip-01.mp4",
+      "start_time": 0.0,
+      "fit": "cover",
+      "corners": [
+        [1460.0, 390.0],
+        [1840.0, 280.0],
+        [1840.0, 540.0],
+        [1460.0, 590.0]
+      ]
+    }
+  ]
+}

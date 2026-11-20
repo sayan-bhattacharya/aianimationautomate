@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/
+screens_90s.npz
+she_film/cache/screens_90s.npz
+preview_720p/
+she_render_1080p/
+*.zip
+temp_*

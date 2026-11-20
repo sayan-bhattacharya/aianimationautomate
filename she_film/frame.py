@@ -1,0 +1,403 @@
+"""One frame from the plates and the clock. No plate is rebuilt here."""
+import math
+import cv2
+import numpy as np
+from PIL import Image
+
+from she_film import actors, water
+from she_film.clock import (
+    HEIGHT,
+    HORIZON,
+    WIDTH,
+    birds,
+    buddha,
+    colony,
+    crimson,
+    dream,
+    herd,
+    ice,
+    moon,
+    scene_light,
+    sky_weights,
+    smooth,
+    snow_amount,
+    sun,
+    title_lines,
+    visit,
+    waking,
+    water_stillness,
+)
+
+_SUN_CACHE = {}
+
+
+def _scaled_sun(sprite, radius, squash):
+    key = (int(radius), int(squash * 24))
+    hit = _SUN_CACHE.get(key)
+    if hit is None:
+        im = Image.fromarray(sprite)
+        w = max(8, int(im.width * (radius / 280.0)))
+        h = max(8, int(w * squash))
+        hit = np.asarray(im.resize((w, h), Image.Resampling.BILINEAR)).astype(np.float32)
+        hit[:, :, 3] *= 1.0 / 255.0
+        _SUN_CACHE[key] = hit
+    return hit
+
+
+def _separated(craft, moon_body):
+    if craft is None:
+        return False
+    if moon_body is None:
+        return True
+    mx, alt = moon_body
+    return math.hypot(craft[0] - mx, craft[1] - (HORIZON - alt)) > 220.0
+
+
+def _logo_frame(plates, t):
+    frame = np.zeros((HEIGHT, WIDTH, 3), np.float32)
+    frame[:, :] = (22, 18, 16)
+    yy = np.linspace(-1, 1, HEIGHT, dtype=np.float32)[:, None]
+    xx = np.linspace(-1, 1, WIDTH, dtype=np.float32)[None, :]
+    glow = np.clip(1.0 - np.sqrt(xx ** 2 + yy ** 2), 0, 1) ** 2
+    frame += glow[:, :, None] * np.array([90, 50, 16], np.float32)
+    logo = plates["logo"]
+    alpha = 1.0
+    if t < 2.0:
+        alpha = 1.0
+        frame += (1.0 - t / 2.0) * 180.0
+    elif t >= 4.6:
+        alpha = 1.0 - smooth((t - 4.6) / 3.4)
+    actors.over(frame, logo, (WIDTH - logo.shape[1]) / 2, (HEIGHT - logo.shape[0]) / 2, alpha)
+    if t >= 4.6:
+        world = render(plates, 8.2)
+        p = smooth((t - 4.6) / 3.4)
+        frame = frame * (1.0 - p) + world.astype(np.float32) * p
+    return np.clip(frame, 0, 255).astype(np.uint8)
+
+
+def _render_buddha_waveform(frame, t, buddha_alpha, plates):
+    """
+    Audio-reactive oscilloscope waveform with prominent crests and troughs over Buddha's heart region (y=600),
+    and slowly expanding, highly saturated radiant white mystical love heart glow during fadeout.
+    """
+    feats = plates.get("audio_feats")
+    frame_idx = min(10777, max(0, int(t * 24)))
+    
+    if feats is not None:
+        idx0 = max(0, frame_idx - 3)
+        idx1 = min(len(feats), frame_idx + 4)
+        sub_bass = float(np.mean(feats[idx0:idx1, 2]))
+        onset = float(feats[frame_idx, 9]) if frame_idx < len(feats) else 0.5
+    else:
+        sub_bass = 0.95
+        onset = 0.5
+    
+    # Buddha's heart center is located at (heart_x=960, center_y=600)
+    center_y = 600
+    heart_x = 960
+    xs = np.arange(0, WIDTH, 3, dtype=np.int32)
+    
+    # Gaussian chest envelope centered at x=960 across the torso
+    chest_env = np.exp(-((xs - heart_x) / 480.0) ** 2).astype(np.float32)
+    
+    # Distinct, visible waveform crests and troughs (musical harmonics, peaks and valleys)
+    # Primary musical wave + harmonic overtone + fast transient wave detail
+    w_sub = np.sin(xs * 0.048 + t * 4.2) * (42.0 * sub_bass)
+    w_harm = np.sin(xs * 0.115 - t * 7.8) * (22.0 * (0.8 + 0.4 * onset))
+    w_fine = np.sin(xs * 0.220 + t * 12.5) * (12.0 * sub_bass)
+    total_wave = (w_sub + w_harm + w_fine) * chest_env
+    
+    ys_primary = (center_y + total_wave).astype(np.int32)
+    ys_secondary = (center_y - total_wave * 0.65 + np.sin(xs * 0.08 + t * 5.5) * 10.0 * chest_env).astype(np.int32)
+    
+    pts_prim = np.column_stack((xs, ys_primary)).reshape((-1, 1, 2))
+    pts_sec = np.column_stack((xs, ys_secondary)).reshape((-1, 1, 2))
+    
+    glow = np.zeros_like(frame)
+    # Multi-layered glowing oscilloscope traces
+    cv2.polylines(glow, [pts_prim], False, (50, 240, 220), 5, cv2.LINE_AA)
+    cv2.polylines(glow, [pts_prim], False, (255, 255, 255), 2, cv2.LINE_AA)
+    cv2.polylines(glow, [pts_sec], False, (255, 120, 210), 3, cv2.LINE_AA)
+    cv2.polylines(glow, [pts_sec], False, (255, 225, 140), 1, cv2.LINE_AA)
+    
+    alpha = float(buddha_alpha * 0.85)
+    frame += glow * alpha
+
+    # Mystical Love Saturated White Heart Glow: slowly animated expansion (410s <= t <= 428s)
+    if t >= 410.0:
+        glow_fade = min(1.0, max(0.0, (t - 410.0) / 12.0))
+        # Animated slow expansion curve from t=410s to 428s
+        expand_p = smooth((t - 410.0) / 17.0)
+        # Gentle 43 BPM meditative heartbeat pulse
+        pulse = 1.0 + 0.14 * math.sin((t - 410.0) * 4.3)
+        
+        # Expanding radius: core blooms from 45px to 125px; outer aura blooms from 140px to 340px
+        core_r = (45.0 + 80.0 * expand_p) * pulse
+        aura_r = (140.0 + 200.0 * expand_p) * pulse
+        
+        yy, xx = np.ogrid[max(0, center_y - 300):min(HEIGHT, center_y + 300),
+                          max(0, heart_x - 380):min(WIDTH, heart_x + 380)]
+        dist_sq = ((xx - heart_x) / 1.3) ** 2 + (yy - center_y) ** 2
+        
+        core_val = np.exp(-dist_sq / (2.0 * core_r ** 2))
+        aura_val = np.exp(-dist_sq / (2.0 * aura_r ** 2))
+        
+        # Subtle divine rays rotating slowly
+        angle = np.arctan2(yy - center_y, xx - heart_x)
+        rays = 0.5 + 0.5 * np.cos(8.0 * angle + t * 0.35)
+        
+        # Highly saturated pure luminous white emission at heart core
+        white_intensity = glow_fade * (core_val * 255.0 + aura_val * 110.0 + rays * aura_val * 40.0 * expand_p)
+        gold_intensity = glow_fade * (aura_val * 50.0)
+        
+        y0, y1 = max(0, center_y - 300), min(HEIGHT, center_y + 300)
+        x0, x1 = max(0, heart_x - 380), min(WIDTH, heart_x + 380)
+        
+        # Saturated white light: maximum equal RGB boosting with golden warmth at outer fringe
+        frame[y0:y1, x0:x1, 0] = np.clip(frame[y0:y1, x0:x1, 0] + white_intensity + gold_intensity * 0.5, 0, 255)
+        frame[y0:y1, x0:x1, 1] = np.clip(frame[y0:y1, x0:x1, 1] + white_intensity + gold_intensity * 0.3, 0, 255)
+        frame[y0:y1, x0:x1, 2] = np.clip(frame[y0:y1, x0:x1, 2] + white_intensity, 0, 255)
+
+
+def _render_studio_screens(base_studio, t, plates=None):
+    """
+    Renders front-facing Buddha telemetry suite in the redesigned 2-screen setup
+    using true perspective planar homography (cv2.warpPerspective) onto calibrated
+    perspective trapezoids that respect Z-axis depth vanishing geometry:
+      - Screen A (Left Wall): Between The Notes Logo -> Dinosaur Caravan sequence
+      - Screen B (Right Wall): Cheetah -> Romcom -> Commercial -> White Noise (in series)
+    """
+    studio = base_studio.copy()
+    screens_data = plates.get("screens_90s") if plates is not None else None
+    h_bg, w_bg = studio.shape[:2]
+
+    def apply_perspective_screen(quad, frames_key, default_rgb):
+        q = np.array(quad, dtype=np.float32)
+        w_top = np.linalg.norm(q[1] - q[0])
+        w_bot = np.linalg.norm(q[2] - q[3])
+        h_l = np.linalg.norm(q[3] - q[0])
+        h_r = np.linalg.norm(q[2] - q[1])
+        sw = max(16, int(max(w_top, w_bot) * 2))
+        sh = max(16, int(max(h_l, h_r) * 2))
+
+        if screens_data is not None and frames_key in screens_data:
+            frames = screens_data[frames_key]
+            f_idx = int(t * 24.0) % len(frames)
+            scr = cv2.resize(frames[f_idx], (sw, sh), interpolation=cv2.INTER_AREA).astype(np.float32)
+        else:
+            scr = np.full((sh, sw, 3), default_rgb, dtype=np.float32)
+
+        # Authentic 1990s horizontal scanlines
+        scr[::2, :] *= 0.88
+        # CRT glass bulb curvature vignette (radial falloff)
+        yy, xx = np.ogrid[:sh, :sw]
+        nx = (xx - sw * 0.5) / (sw * 0.5)
+        ny = (yy - sh * 0.5) / (sh * 0.5)
+        vig = np.clip(1.0 - 0.16 * (nx ** 2 + ny ** 2), 0.76, 1.0)[:, :, None]
+        scr = np.clip(scr * vig * 1.05 + 4.0, 0, 255)
+
+        # Planar Homography Warping
+        src_pts = np.array([[0, 0], [sw, 0], [sw, sh], [0, sh]], dtype=np.float32)
+        H = cv2.getPerspectiveTransform(src_pts, q)
+        warped = cv2.warpPerspective(scr, H, (w_bg, h_bg), flags=cv2.INTER_LANCZOS4)
+
+        # High-precision anti-aliased feathered mask
+        x0 = max(0, int(np.min(q[:, 0]) - 8))
+        y0 = max(0, int(np.min(q[:, 1]) - 8))
+        x1 = min(w_bg, int(np.max(q[:, 0]) + 8))
+        y1 = min(h_bg, int(np.max(q[:, 1]) + 8))
+
+        mask = np.zeros((y1 - y0, x1 - x0), dtype=np.float32)
+        local_poly = (q - np.array([x0, y0])).astype(np.int32)
+        cv2.fillConvexPoly(mask, local_poly, 1.0, lineType=cv2.LINE_AA)
+        mask = cv2.GaussianBlur(mask, (3, 3), 0.8)[:, :, None]
+
+        roi_bg = studio[y0:y1, x0:x1]
+        roi_warp = warped[y0:y1, x0:x1]
+        studio[y0:y1, x0:x1] = roi_bg * (1.0 - mask * 0.95) + roi_warp * (mask * 0.95)
+
+    # 1. SCREEN A (Left Wall): Between The Notes Logo -> Dinosaur Caravan Sequence
+    apply_perspective_screen([[80.0, 280.0], [460.0, 390.0], [460.0, 590.0], [80.0, 540.0]], "scr_left", [50, 70, 80])
+
+    # 2. SCREEN B (Right Wall): Cheetah -> Romcom -> Commercial -> White Noise in series
+    apply_perspective_screen([[1460.0, 390.0], [1840.0, 280.0], [1840.0, 540.0], [1460.0, 590.0]], "scr_right", [45, 65, 30])
+
+    return studio
+
+
+def render(plates, t):
+    if t < 8.0:
+        return _logo_frame(plates, t)
+
+    day, warm, night = sky_weights(t)
+    sun_body = sun(t)
+    moon_body = moon(t)
+    red = crimson(t)
+    if sun_body and moon_body and sun_body[1] > 0 and moon_body[1] > 0:
+        raise RuntimeError(f"two lamps at t={t}")
+
+    frame = np.zeros((HEIGHT, WIDTH, 3), np.float32)
+    frame[:HORIZON] = plates["day"] * day + plates["warm"] * warm + plates["night"] * night
+    buddha_alpha = buddha(t)
+    if buddha_alpha > 0.01:
+        actors.over(frame, plates["nebula"], 0, 0, buddha_alpha * 0.85)
+    if red > 0.01:
+        frame[:HORIZON, :, 0] += 36.0 * red
+        frame[:HORIZON, :, 1] *= 1.0 - 0.22 * red
+        frame[:HORIZON, :, 2] *= 1.0 - 0.35 * red
+    actors.stars(frame, plates, t, night * (1.0 - 0.25 * red), moon_body)
+    actors.shimmering_stars(frame, plates, t, night * (1.0 - 0.25 * red), stillness=water_stillness(t))
+
+    if moon_body is not None:
+        sprite = plates["moon_red"] if red > 0.4 else plates["moon"]
+        fade = smooth((moon_body[1] + 12.0) / 24.0)
+        actors.over(
+            frame,
+            sprite,
+            moon_body[0] - sprite.shape[1] / 2,
+            HORIZON - moon_body[1] - sprite.shape[0] / 2,
+            fade,
+        )
+
+    if sun_body is not None:
+        alt = sun_body[1]
+        radius = 300.0 - 180.0 * smooth(alt / 340.0)
+        squash = 1.0 - 0.4 * smooth((52.0 - alt) / 52.0)
+        sprite = _scaled_sun(plates["sun_src"], radius, squash)
+        fade = smooth((alt + 24.0) / 30.0)
+        actors.over(
+            frame,
+            sprite,
+            sun_body[0] - sprite.shape[1] / 2,
+            HORIZON - alt - sprite.shape[0] / 2,
+            fade,
+        )
+
+    # Right-hand credits stripes artifact: cleanly eliminated by t=14.0s for pristine sunrise
+    if t < 14.0:
+        stripe_fade = smooth((14.0 - t) / 2.5) if t >= 11.5 else 1.0
+        stripe_a = (0.12 * night + 0.55 * warm + 0.35 * day) * stripe_fade
+        if stripe_a > 0.02:
+            stripes, sx, sy = plates["stripes"]
+            actors.over(frame, stripes, sx, sy, stripe_a)
+
+    ridge_colors = (
+        np.array([186 * warm + 150 * day + 42 * night, 96 * warm + 142 * day + 40 * night, 64 * warm + 160 * day + 68 * night], np.float32),
+        np.array([128 * warm + 102 * day + 30 * night, 72 * warm + 112 * day + 30 * night, 64 * warm + 130 * day + 52 * night], np.float32),
+        np.array([64 * warm + 54 * day + 20 * night, 58 * warm + 78 * day + 22 * night, 62 * warm + 90 * day + 36 * night], np.float32),
+        np.array([34 * warm + 30 * day + 12 * night, 44 * warm + 52 * day + 16 * night, 50 * warm + 62 * day + 26 * night], np.float32),
+    )
+    y0 = 280
+    band = frame[y0:HORIZON]
+    for mask, color in zip(plates["ridges"], ridge_colors):
+        a = mask[y0:HORIZON, :, None]
+        band += (color - band) * a
+
+    cover = ice(t)
+    if cover > 0.01:
+        land = plates["land"][y0:HORIZON, :, None]
+        white = np.array([228, 234, 240], np.float32)
+        band += (white - band) * (cover * 0.8) * land
+
+    alpha, stage, copies = colony(t)
+    if alpha > 0.02:
+        actors.life(frame, plates, t, alpha)
+    actors.beasts(frame, plates, herd(t), t)
+    arrived = visit(t)
+    if arrived is not None:
+        actors.craft(frame, plates, arrived)
+    # The nearest ridge covers only the roots, so the stand sits in the hill.
+    y1 = HORIZON - 70
+    front = plates["ridges"][-1][y1:HORIZON, :, None]
+    frame[y1:HORIZON] += (ridge_colors[-1] - frame[y1:HORIZON]) * front
+    if cover > 0.01:
+        land = plates["land"][y1:HORIZON, :, None]
+        white = np.array([228, 234, 240], np.float32)
+        frame[y1:HORIZON] += (white - frame[y1:HORIZON]) * (cover * 0.8) * land
+
+    base = (
+        plates["water_warm"] * warm
+        + plates["water_day"] * day
+        + plates["water_night"] * night
+    )
+    lamps = []
+    if sun_body is not None:
+        lamps.append((sun_body[0], smooth((sun_body[1] + 16.0) / 30.0), (252, 186, 80), 64, 420))
+    elif moon_body is not None:
+        rgb = (210, 72, 64) if red > 0.35 else (198, 210, 224)
+        lamps.append((moon_body[0], 0.72 * smooth((moon_body[1] + 10.0) / 24.0), rgb, 26, 170))
+    if arrived is not None:
+        cx, cy, near = arrived
+        # Flying saucer celestial glitter column across the ocean waves (matching the moon style)
+        saucer_alt = max(0.0, float(HORIZON - cy))
+        saucer_wt = min(0.92, (0.30 + 0.62 * near) * max(0.0, 1.0 - saucer_alt / 550.0))
+        if saucer_wt > 0.04:
+            lamps.append((cx, saucer_wt, (190, 230, 255), 42, 220))
+    still = max(cover, water_stillness(t))
+    frame[HORIZON:] = water.paint(base, t, lamps, stillness=still, audio_feats=plates.get("audio_feats"))
+    if alpha > 0.02:
+        actors.life_reflect(frame, plates, t, stillness=still)
+    actors.beasts_reflect(frame, plates, herd(t), t, stillness=still)
+    if arrived is not None:
+        actors.craft_reflect(frame, plates, arrived, t)
+
+    # The cosmic demigod Buddha reveal (Maya & Lila / The Projection Mechanism)
+    if buddha_alpha > 0.01:
+        frame = frame * (1.0 - buddha_alpha) + plates["cosmic_demigod"] * buddha_alpha
+        _render_buddha_waveform(frame, t, buddha_alpha, plates)
+
+    for (rule_a, text_a), (words, rule, x, y) in zip(title_lines(t), plates["titles"]):
+        if rule is not None and rule_a > 0.02:
+            actors.over(frame, rule, x + (words.shape[1] - rule.shape[1]) / 2, y + words.shape[0] - 2, rule_a)
+        if text_a > 0.02:
+            actors.over(frame, words, x, y, text_a)
+
+    actors.snow(frame, plates, t, snow_amount(t), moon_body, None)
+    actors.birds(frame, plates, t, birds(t))
+
+    # The Waking / Glitch De-rezzing Transition into the 1970s Telemetry Studio & Front-Facing Buddha
+    veil = dream(t)
+    if veil > 0.005:
+        # Front-facing Buddha in walnut telemetry suite with animated CRT screen feeds
+        physical_reality = _render_studio_screens(plates["lab"], t, plates)
+        
+        # Heavy Cybernetic Glitch & Reality Flicker (420s <= t <= 436s)
+        eff_veil = veil
+        if 0.02 < veil < 0.98:
+            flicker = math.sin(t * 42.0) * math.cos(t * 26.5)
+            flicker_spike = math.sin(t * 78.3)
+            micro = 0.16 * flicker + 0.22 * max(0.0, flicker_spike - 0.6)
+            eff_veil = np.clip(veil + micro, 0.0, 1.0)
+            
+        mixed = frame * (1.0 - eff_veil) + physical_reality * eff_veil
+        
+        # Matrix simulation tearing: horizontal slice shifts, scanline noise & chromatic RGB splitting
+        if 0.04 < veil < 0.96 and (math.sin(t * 62.0) > 0.35 or int(t * 24) % 7 == 0):
+            glitched = mixed.copy()
+            rng_val = int(t * 150)
+            # Displace 4 distinct horizontal simulation bands
+            for i in range(4):
+                y_start = (rng_val * 61 + i * 197) % (HEIGHT - 60)
+                band_h = 6 + (rng_val * 17 + i * 31) % 36
+                y_end = min(HEIGHT, y_start + band_h)
+                shift_x = ((rng_val + i * 43) % 41) - 20
+                if shift_x != 0:
+                    band = glitched[y_start:y_end]
+                    # Chromatic aberration RGB split
+                    band[:, :, 0] = np.roll(band[:, :, 0], shift_x, axis=1)
+                    band[:, :, 2] = np.roll(band[:, :, 2], -shift_x, axis=1)
+                    # Analog CRT scanline brightening
+                    band[:, :, :] = np.clip(band * 1.25 + 24, 0, 255)
+                    glitched[y_start:y_end] = band
+            frame = glitched
+        else:
+            frame = mixed
+
+
+    exposure, warmth = scene_light(t)
+    if exposure > 1.01:
+        frame *= exposure
+        frame[:, :, 0] += 48.0 * warmth
+        frame[:, :, 1] += 22.0 * warmth
+    frame *= plates["vignette"]
+    return np.clip(frame, 0, 255).astype(np.uint8)
