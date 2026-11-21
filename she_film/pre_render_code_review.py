@@ -59,6 +59,34 @@ def run_pre_render_code_review():
     else:
         record_fail("S1.2", "Credits stack artifact persisting", "stripes not cut off at t=14.0s in frame.py")
 
+    # A previous Colab session/repository copy can leave an older
+    # screens_90s.npz in place. Rebuild it before plates.load() so the reviewer
+    # always inspects the same validated, moving Buddha feeds the renderer uses.
+    from she_film import generate_screens_cache
+    screen_cache_path = os.path.join(plates.CACHE, "screens_90s.npz")
+    cache_is_valid = False
+    if os.path.isfile(screen_cache_path):
+        try:
+            with np.load(screen_cache_path) as cached_screens:
+                required = ("scr_left", "scr_right")
+                cache_is_valid = all(key in cached_screens for key in required)
+                if cache_is_valid:
+                    for key in required:
+                        feed = cached_screens[key]
+                        if (feed.ndim != 4 or len(feed) < 240
+                                or feed.shape[1:] != (320, 240, 3)
+                                or float(np.mean(np.abs(
+                                    feed[0].astype(np.float32)
+                                    - feed[len(feed) // 2].astype(np.float32)
+                                ))) <= 2.0):
+                            cache_is_valid = False
+                            break
+        except Exception as exc:
+            print(f"[WARN] Existing Buddha CRT cache is unreadable: {exc}")
+    if not cache_is_valid:
+        print("[INFO] Rebuilding missing/stale Buddha CRT feed cache before audit...")
+        generate_screens_cache.build_screens_cache(plates.CACHE)
+
     # -------------------------------------------------------------
     # 2. SCREEN 2 AUDIT: Flow AI Green Screen Mushroom Growth
     # -------------------------------------------------------------
@@ -75,6 +103,15 @@ def run_pre_render_code_review():
         record_pass("S2.2", "Flow AI Mushroom Idle loop loaded", f"{vs_idle.n_frames} frames")
     else:
         record_fail("S2.2", "Mushroom Idle sprite missing", "anim_mushroom_idle is None or empty")
+    if vs_growth is not None and vs_growth.n_frames:
+        m3_pre_endpoint = actors.mushroom3_target_frame(vs_growth, actors.MUSHROOM_GROWTH_SECONDS - 1e-3)
+        m3_endpoint = actors.mushroom3_target_frame(vs_growth, actors.MUSHROOM_GROWTH_SECONDS)
+        if np.array_equal(m3_pre_endpoint, m3_endpoint):
+            record_pass("S2.3", "Mushroom 3 reaches and holds Scene 1's exact final growth frame")
+        else:
+            record_fail("S2.3", "Mushroom 3 endpoint continuity", "frame changed across the growth-to-target boundary")
+    else:
+        record_fail("S2.3", "Mushroom 3 canonical target", "growth sprite unavailable")
 
     # -------------------------------------------------------------
     # 3. SCREEN 3 AUDIT: Ocean Ripples Sparsity & Audio Reactivity
@@ -131,6 +168,24 @@ def run_pre_render_code_review():
         record_fail("S5.2", "Ankylosaur sprite missing", "anim_ankylosaur is None or empty")
 
     # -------------------------------------------------------------
+    # 5c. PTERODACTYL WINGBEAT LOOP CONTINUITY
+    # -------------------------------------------------------------
+    ptero_cycle = actors.pterodactyl_loop_frames(p.get("anim_pterodactyl"))
+    if ptero_cycle is not None and len(ptero_cycle) >= 2:
+        ptero_alpha = ptero_cycle[..., 3:4]
+        ptero_pm = np.concatenate((ptero_cycle[..., :3] * ptero_alpha, ptero_alpha), axis=3)
+        loop_seam = float(np.mean(np.abs(ptero_pm[-1] - ptero_pm[0])))
+        in_cycle_deltas = np.mean(np.abs(ptero_pm[1:] - ptero_pm[:-1]), axis=(1, 2, 3))
+        normal_delta = float(np.median(in_cycle_deltas))
+        if normal_delta > 0.0 and loop_seam <= normal_delta * 0.75:
+            record_pass("S5.4", "Pterodactyl wing pose continues smoothly across its repeating loop",
+                        f"seam={loop_seam:.2f}, median_step={normal_delta:.2f}, cycle={len(ptero_cycle)} frames")
+        else:
+            record_fail("S5.4", "Pterodactyl wingbeat loop seam", f"seam={loop_seam:.2f}, median_step={normal_delta:.2f}")
+    else:
+        record_fail("S5.4", "Pterodactyl wingbeat asset/cycle missing", "expected at least 175 cached Flow frames")
+
+    # -------------------------------------------------------------
     # 6. SCREEN 5b AUDIT: Dinosaur Night Reflection Visibility
     # -------------------------------------------------------------
     print("\n--- 6. Screen 5b Audit (Dinosaur Night Reflection Visibility) ---")
@@ -173,20 +228,25 @@ def run_pre_render_code_review():
     # 8. SCREEN 7 AUDIT: Telemetry Studio Redesign 2-Screen Fitting
     # -------------------------------------------------------------
     print("\n--- 8. Screen 7 Audit (Buddha B-roll on curved studio CRTs) ---")
-    frame_src = open(frame.__file__, encoding="utf-8").read()
-    if "apply_perspective_screen([[80.0, 280.0], [460.0, 390.0], [460.0, 590.0], [80.0, 540.0]], \"scr_left\"" in frame_src and \
-       "apply_perspective_screen([[1460.0, 390.0], [1840.0, 280.0], [1840.0, 540.0], [1460.0, 590.0]], \"scr_right\"" in frame_src:
-        record_pass("S7.1", "Two studio CRTs retain calibrated perspective geometry",
-                    "Left [[80,280],[460,390],[460,590],[80,540]], right [[1460,390],[1840,280],[1840,540],[1460,590]]")
+    layout_ok, layout_note = frame.validate_studio_screen_bounds()
+    if layout_ok:
+        record_pass("S7.1", "TV video quads fit inside the source plate's visible display bounds", layout_note)
     else:
-        record_fail("S7.1", "CRT monitor screen geometry in frame.py", "exact screen coordinates not found")
+        record_fail("S7.1", "TV display area alignment", layout_note)
+    debug_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "preview_720p", "tv_screen_alignment_debug.png")
+    os.makedirs(os.path.dirname(debug_path), exist_ok=True)
+    debug_img = frame.studio_screen_debug_overlay(p["lab"])
+    if cv2.imwrite(debug_path, cv2.cvtColor(debug_img, cv2.COLOR_RGB2BGR)):
+        record_pass("S7.3", "TV alignment debug overlay saved", debug_path)
+    else:
+        record_fail("S7.3", "TV alignment debug overlay", f"could not write {debug_path}")
 
     screen_feeds = p.get("screens_90s")
     feeds_ok = screen_feeds is not None and all(k in screen_feeds for k in ("scr_left", "scr_right"))
     if feeds_ok:
         left_feed, right_feed = screen_feeds["scr_left"], screen_feeds["scr_right"]
         dynamic = all(
-            feed.ndim == 4 and len(feed) >= 240 and feed.shape[1:] == (240, 320, 3)
+            feed.ndim == 4 and len(feed) >= 240 and feed.shape[1:] == (320, 240, 3)
             and float(np.mean(np.abs(feed[0].astype(np.float32) - feed[len(feed) // 2].astype(np.float32)))) > 2.0
             for feed in (left_feed, right_feed)
         )
@@ -197,6 +257,25 @@ def run_pre_render_code_review():
             record_fail("S7.2", "Dynamic Buddha B-roll feeds", "missing, static, or invalid screen frames")
     else:
         record_fail("S7.2", "Dynamic Buddha B-roll feeds", "screens_90s.npz is missing one or both feeds")
+
+    # -------------------------------------------------------------
+    # 9. MASTER DURATION & OUTRO FADE
+    # -------------------------------------------------------------
+    print("\n--- 9. Master Runtime & Branded Outro ---")
+    exact_frames = int(round(clock.DURATION * clock.FPS))
+    outro_ok = (
+        abs(clock.DURATION - 445.0) < 1e-6
+        and exact_frames == 10680
+        and clock.TOTAL_FRAMES == exact_frames
+        and clock.OUTRO_TRANSITION_START < clock.OUTRO_FADE_START < clock.DURATION
+        and plates.build_outro_card is not None
+    )
+    if outro_ok:
+        record_pass("S8.1", "7:25 runtime, 10,680 frames, branded outro and final fade are configured",
+                    f"fade={clock.OUTRO_FADE_START:.1f}-{clock.DURATION:.1f}s")
+    else:
+        record_fail("S8.1", "Master duration/outro configuration",
+                    f"duration={clock.DURATION}, frames={clock.TOTAL_FRAMES}, outro={clock.OUTRO_TRANSITION_START}/{clock.OUTRO_FADE_START}")
 
     print("\n" + "=" * 80)
     print(f"AUDIT SUMMARY: {passes} PASSED | {failures} FAILED | {warnings} WARNINGS")

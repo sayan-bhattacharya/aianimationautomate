@@ -1,4 +1,4 @@
-"""Render the full 7:29 song film in independently restartable 45s chunks."""
+"""Render the 7:25 song film in independently restartable 45s chunks."""
 import os
 import math
 import subprocess
@@ -247,7 +247,6 @@ def main():
     if "--stills" in sys.argv:
         save_stills(load())
         return
-    render_movie()
     render_movie()
 
 

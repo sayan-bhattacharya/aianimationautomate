@@ -7,6 +7,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from she_film.clock import HEIGHT, HORIZON, WIDTH
 from she_film import video_sprites
+from she_film.outro import build_outro_card
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CACHE = os.path.join(os.path.dirname(__file__), "cache")
@@ -623,6 +624,7 @@ def load():
         "logo": _logo(),
         "stripes": _stripes(),
         "vignette": _vignette(),
+        "outro_card": build_outro_card(LOGO_PATH),
         "stars": (
             rng.integers(20, WIDTH - 20, 180),
             rng.integers(12, HORIZON - 70, 180),
@@ -678,8 +680,17 @@ def load():
     screens_npz = os.path.join(CACHE, "screens_90s.npz")
     if os.path.exists(screens_npz):
         try:
-            plates["screens_90s"] = np.load(screens_npz)
-        except Exception:
+            # Materialize only the two used feeds once. Indexing an NpzFile in
+            # every rendered frame would decompress the same 200+ MB archive
+            # repeatedly during the studio sequence.
+            with np.load(screens_npz) as screen_archive:
+                required = ("scr_left", "scr_right")
+                missing = [key for key in required if key not in screen_archive]
+                if missing:
+                    raise ValueError(f"Screen cache is missing keys: {missing}")
+                plates["screens_90s"] = {key: screen_archive[key] for key in required}
+        except Exception as exc:
+            print(f"[WARN] Could not load studio screen cache {screens_npz}: {exc}")
             plates["screens_90s"] = None
     else:
         plates["screens_90s"] = None

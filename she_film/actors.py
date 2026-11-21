@@ -3,7 +3,49 @@ import math
 import cv2
 import numpy as np
 
-from she_film.clock import HEIGHT, HORIZON, WIDTH, lerp, smooth, sky_weights
+from she_film.clock import HEIGHT, HORIZON, WIDTH, crimson, lerp, moon, smooth, sky_weights, sun
+
+PTERO_WING_CYCLE_START = 147
+PTERO_WING_CYCLE_END = 175  # exclusive: 28-frame, 1.17s repeat with matching wing pose
+
+
+def pterodactyl_loop_frames(anim_ptero):
+    """Return the visually matched, single wingbeat segment from the Flow clip."""
+    if anim_ptero is None or anim_ptero.n_frames < PTERO_WING_CYCLE_END:
+        return None
+    return anim_ptero.frames[PTERO_WING_CYCLE_START:PTERO_WING_CYCLE_END]
+
+
+def _pterodactyl_frame(anim_ptero, t):
+    cycle = pterodactyl_loop_frames(anim_ptero)
+    if cycle is None:
+        return anim_ptero.get_frame(t) if anim_ptero is not None else None
+    # Phase from flight entrance, not song time, so every pass starts consistently.
+    frame_index = int(round(max(0.0, t - 242.0) * anim_ptero.fps)) % len(cycle)
+    return cycle[frame_index]
+
+
+def _celestial_shadow(x, t, scale=1.0):
+    """Approximate ground-shadow direction from the active sun or moon."""
+    day, warm, night = sky_weights(t)
+    candidates = []
+    sun_body = sun(t)
+    if sun_body is not None:
+        energy = day * smooth((sun_body[1] + 12.0) / 30.0)
+        if energy > 0.03:
+            candidates.append((energy, sun_body, (27, 24, 19)))
+    moon_body = moon(t)
+    if moon_body is not None:
+        energy = night * 0.58 * smooth((moon_body[1] + 12.0) / 30.0)
+        if energy > 0.03:
+            candidates.append((energy, moon_body, (15, 21, 32)))
+    if candidates:
+        energy, body, color = max(candidates, key=lambda item: item[0])
+        side = 1 if x >= body[0] else -1
+        low_sun_stretch = 1.0 + 0.35 * (1.0 - min(1.0, max(0.0, body[1] / 420.0)))
+        dx = int(side * (15.0 + 28.0 * energy) * low_sun_stretch * scale)
+        return dx, int((4.0 + 8.0 * energy) * scale), color
+    return 0, int(3.0 * scale), (20, 22, 28)
 
 
 def over(frame, sprite, x, y, alpha=1.0):
@@ -82,6 +124,17 @@ MUSHROOM_STANDS = [
     (1260, 50.0, 1.05),  # East Stand (x=1260)
     (1540, 54.0, 0.65),  # Far East Stand (x=1540)
 ]
+MUSHROOM3_TARGET_INDEX = 2
+MUSHROOM_GROWTH_SECONDS = 8.0
+
+
+def mushroom3_target_frame(growth_sprite, age):
+    """Use the Scene 1 growth sequence, then hold its exact terminal frame."""
+    if growth_sprite is None or growth_sprite.n_frames == 0:
+        return None
+    if age < MUSHROOM_GROWTH_SECONDS:
+        return growth_sprite.get_frame(age, loop=False)
+    return growth_sprite.frames[-1]
 
 
 def _get_active_mushroom_stands(plates, t):
@@ -102,7 +155,7 @@ def _get_active_mushroom_stands(plates, t):
             stands.append((spr, 640 - spr.shape[1] // 2, base_y - spr.shape[0], 1.0, 1.0))
         return stands
 
-    for x, t0, b_scale in MUSHROOM_STANDS:
+    for stand_index, (x, t0, b_scale) in enumerate(MUSHROOM_STANDS):
         if t < t0:
             continue
         age = t - t0
@@ -113,9 +166,18 @@ def _get_active_mushroom_stands(plates, t):
         # Delay propagates from leftmost stand (x=340) to rightmost stand (x=1540)
         wave_delay = (x - 340.0) / 380.0
         
-        if age < 8.0:
-            raw = vs_growth.get_frame(age, loop=False)
+        if age < MUSHROOM_GROWTH_SECONDS:
+            raw = (mushroom3_target_frame(vs_growth, age)
+                   if stand_index == MUSHROOM3_TARGET_INDEX
+                   else vs_growth.get_frame(age, loop=False))
             a_fade = min(1.0, age / 0.8)
+        elif stand_index == MUSHROOM3_TARGET_INDEX:
+            # Mushroom 3 resolves to the exact terminal image from Mushroom
+            # Growth Scene 1. The growth clip itself provides the continuous
+            # transition; holding its last decoded frame avoids a shape jump
+            # into the unrelated idle-loop mushroom family at age 8 seconds.
+            raw = mushroom3_target_frame(vs_growth, age)
+            a_fade = 1.0
         else:
             # Minimized frequency (0.45x) and neighbor wave phase delay
             idle_t = ((age - 8.0) * 0.45 - wave_delay) % 8.0
@@ -194,7 +256,7 @@ def birds(frame, plates, t, amount):
 
     # 2. Soaring Pterodactyl flying alongside bird flocks in the sky
     anim_ptero = plates.get("anim_pterodactyl")
-    ptero = anim_ptero.get_frame(t) if anim_ptero is not None else plates.get("pokemon_pterodactyl")
+    ptero = _pterodactyl_frame(anim_ptero, t) if anim_ptero is not None else plates.get("pokemon_pterodactyl")
     if ptero is not None and 242.0 <= t <= 342.0:
         # Flip horizontally first so head faces forward towards direction of travel (flying West / left)
         ptero = cv2.flip(ptero, 1)
@@ -335,9 +397,11 @@ def beasts(frame, plates, herd, t=0.0):
                 # Ground contact shadow under feet deepens subtly on rhythmic piano accents
                 shad_rx = int(115 * (1.0 + 0.12 * piano_onset))
                 shad_ry = int(12 * (1.0 + 0.14 * piano_onset))
-                cv2.ellipse(frame, (int(x), int(ground)), (shad_rx, shad_ry), 0, 0, 360, (22, 26, 20), -1, cv2.LINE_AA)
+                _, _, shadow_tint = _celestial_shadow(x, t)
+                cv2.ellipse(frame, (int(x), int(ground)), (shad_rx, shad_ry), 0, 0, 360, shadow_tint, -1, cv2.LINE_AA)
                 # Dynamic long slanting shadow downward towards ocean water edge
-                cv2.ellipse(frame, (int(x - 24), int(ground + 15)), (int(shad_rx * 1.25), int(shad_ry * 1.6)), -12, 0, 360, (18, 22, 16), -1, cv2.LINE_AA)
+                shadow_dx, shadow_dy, _ = _celestial_shadow(x, t, scale=1.0)
+                cv2.ellipse(frame, (int(x + shadow_dx), int(ground + shadow_dy)), (int(shad_rx * 1.25), int(shad_ry * 1.6)), -12, 0, 360, shadow_tint, -1, cv2.LINE_AA)
                 sy = ground - hh + 6
                 over(frame, hero_spr, x - hw / 2, sy, 0.98)
                 
@@ -350,7 +414,8 @@ def beasts(frame, plates, herd, t=0.0):
                             cv2.circle(frame, (lx, ly), 2, (75, 138, 55), -1)
             else:
                 sprite_y = ground - 280 + 4
-                cv2.ellipse(frame, (int(x + 10), int(ground)), (140, 14), 0, 0, 360, (24, 28, 22), -1, cv2.LINE_AA)
+                _, _, shadow_tint = _celestial_shadow(x, t)
+                cv2.ellipse(frame, (int(x + 10), int(ground)), (140, 14), 0, 0, 360, shadow_tint, -1, cv2.LINE_AA)
                 _draw_grazing_sauropod(frame, x - 250, sprite_y, neck_bend, t)
         else:
             # Trailing species: Hadrosaur (1), Ankylosaur (2), Raptor (3)
@@ -369,8 +434,9 @@ def beasts(frame, plates, herd, t=0.0):
             sy = ground - sh + 5
             # Foot contact shadow permanently sized to this exact species
             shad_r = int(sw * 0.32 * (1.0 + 0.1 * piano_onset))
-            cv2.ellipse(frame, (int(x), int(ground)), (shad_r, 8), 0, 0, 360, (24, 28, 22), -1, cv2.LINE_AA)
-            cv2.ellipse(frame, (int(x - 14), int(ground + 10)), (int(shad_r * 1.15), 11), -10, 0, 360, (18, 22, 16), -1, cv2.LINE_AA)
+            shadow_dx, shadow_dy, shadow_tint = _celestial_shadow(x, t, scale=min(1.0, sw / 160.0))
+            cv2.ellipse(frame, (int(x), int(ground)), (shad_r, 8), 0, 0, 360, shadow_tint, -1, cv2.LINE_AA)
+            cv2.ellipse(frame, (int(x + shadow_dx), int(ground + shadow_dy)), (int(shad_r * 1.15), 11), -10, 0, 360, shadow_tint, -1, cv2.LINE_AA)
             over(frame, sprite, x - sw / 2, sy, 0.96)
 
 
@@ -416,8 +482,15 @@ def beasts_reflect(frame, plates, herd, t=0.0, stillness=0.0):
         if HORIZON <= ref_y < HEIGHT - 10 and -sw < ref_x < WIDTH:
             max_ref_h = min(sh, HEIGHT - ref_y)
             if max_ref_h > 10:
-                # Nighttime moonlit reflection boost: clearly visible on the dark ocean
-                night_factor = min(1.0, max(0.0, (t - 280.0) / 20.0))
+                # Derive the water tint from the actual exposure and visible moon altitude.
+                day, warm, night = sky_weights(t)
+                moon_body = moon(t)
+                moon_visibility = (smooth((moon_body[1] + 12.0) / 30.0)
+                                   if moon_body is not None else 0.0)
+                night_factor = night * (0.25 + 0.75 * moon_visibility)
+                sun_body = sun(t)
+                sun_visibility = (day * smooth((sun_body[1] + 12.0) / 30.0)
+                                  if sun_body is not None else 0.0)
                 
                 # Heightened opacity at night so reflection stands out boldly against dark sea
                 top_fade = lerp(0.50, 0.88, night_factor) + 0.10 * float(stillness)
@@ -429,9 +502,9 @@ def beasts_reflect(frame, plates, herd, t=0.0, stillness=0.0):
                 
                 # In daylight: warm amber-teal tint; At night: luminous moonlit silvery-blue radiance
                 # Guaranteeing dinosaurs' reflections are vividly visible on the ocean
-                r_add = lerp(16.0, 78.0, night_factor)
-                g_add = lerp(22.0, 118.0, night_factor)
-                b_add = lerp(30.0, 168.0, night_factor)
+                r_add = 12.0 + 12.0 * sun_visibility + 42.0 * warm + 62.0 * night_factor + 8.0 * crimson(t)
+                g_add = 16.0 + 8.0 * sun_visibility + 22.0 * warm + 96.0 * night_factor + 5.0 * crimson(t)
+                b_add = 24.0 + 4.0 * sun_visibility + 8.0 * warm + 138.0 * night_factor + 14.0 * crimson(t)
                 
                 ref_sprite[:, :, 0] = np.clip(ref_sprite[:, :, 0] * 0.70 + r_add, 0, 255)
                 ref_sprite[:, :, 1] = np.clip(ref_sprite[:, :, 1] * 0.78 + g_add, 0, 255)

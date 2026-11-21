@@ -8,6 +8,10 @@ from she_film import actors, water
 from she_film.clock import (
     HEIGHT,
     HORIZON,
+    DURATION,
+    FPS,
+    OUTRO_FADE_START,
+    OUTRO_TRANSITION_START,
     WIDTH,
     birds,
     buddha,
@@ -30,6 +34,48 @@ from she_film.clock import (
 
 _SUN_CACHE = {}
 _CRT_MAP_CACHE = {}
+
+# Inner phosphor bounds measured from the exact buddha_retro_studio_sleep.jpg
+# plate. Quads are ordered top-left, top-right, bottom-right, bottom-left.
+STUDIO_SCREEN_QUADS = {
+    "scr_left": ((72.0, 302.0), (314.0, 363.0), (314.0, 631.0), (72.0, 682.0)),
+    "scr_right": ((1544.0, 324.0), (1795.0, 312.0), (1795.0, 666.0), (1542.0, 680.0)),
+}
+STUDIO_BEZEL_QUADS = {
+    "scr_left": ((52.0, 278.0), (330.0, 350.0), (330.0, 652.0), (52.0, 712.0)),
+    "scr_right": ((1526.0, 302.0), (1812.0, 298.0), (1812.0, 696.0), (1526.0, 702.0)),
+}
+
+
+def validate_studio_screen_bounds():
+    """Check that each video quad is contained by its source-plate bezel."""
+    for key, screen in STUDIO_SCREEN_QUADS.items():
+        bezel = STUDIO_BEZEL_QUADS[key]
+        bezel_poly = np.asarray(bezel, dtype=np.float32)
+        if len(screen) != 4 or any(
+            cv2.pointPolygonTest(bezel_poly, (float(x), float(y)), False) < 0
+            for x, y in screen
+        ):
+            return False, f"{key} video quad escapes the TV bezel bounds"
+        if len(set(screen)) != 4:
+            return False, f"{key} video quad has duplicate corners"
+    return True, "both video quads are inside their measured bezel bounds"
+
+
+def studio_screen_debug_overlay(studio):
+    """Return a still with red bezel edges and cyan active video edges."""
+    from PIL import Image, ImageDraw
+    image = Image.fromarray(np.clip(studio, 0, 255).astype(np.uint8), "RGB")
+    draw = ImageDraw.Draw(image)
+    for key, points in STUDIO_BEZEL_QUADS.items():
+        draw.line(list(points) + [points[0]], fill=(255, 70, 70), width=4)
+        screen = STUDIO_SCREEN_QUADS[key]
+        draw.line(list(screen) + [screen[0]], fill=(40, 255, 210), width=3)
+        for index, (x, y) in enumerate(screen):
+            r = 7
+            draw.ellipse((x-r, y-r, x+r, y+r), fill=(30, 110, 255), outline=(255, 255, 255), width=2)
+            draw.text((x + 8, y + 4), f"{key[-1]}{index+1}", fill=(255, 255, 255), stroke_width=2, stroke_fill=(0, 0, 0))
+    return np.asarray(image)
 
 
 def _crt_bulge(image, strength=0.055):
@@ -101,7 +147,7 @@ def _render_buddha_waveform(frame, t, buddha_alpha, plates):
     and slowly expanding, highly saturated radiant white mystical love heart glow during fadeout.
     """
     feats = plates.get("audio_feats")
-    frame_idx = min(10777, max(0, int(t * 24)))
+    frame_idx = min(int(DURATION * FPS) - 1, max(0, int(t * FPS)))
     
     if feats is not None:
         idx0 = max(0, frame_idx - 3)
@@ -204,7 +250,21 @@ def _render_studio_screens(base_studio, t, plates=None):
             frames = screens_data[frames_key]
             # Screen programs begin with the studio scene, not at song time zero.
             f_idx = int(max(0.0, t - 420.0) * 24.0) % len(frames)
-            scr = cv2.resize(frames[f_idx], (sw, sh), interpolation=cv2.INTER_AREA).astype(np.float32)
+            # Cover the measured screen plane while preserving the portrait
+            # feed aspect ratio; crop excess edges instead of stretching.
+            src = frames[f_idx]
+            src_h, src_w = src.shape[:2]
+            target_aspect = sw / float(sh)
+            src_aspect = src_w / float(src_h)
+            if src_aspect > target_aspect:
+                crop_w = max(1, int(src_h * target_aspect))
+                x0 = (src_w - crop_w) // 2
+                src = src[:, x0:x0 + crop_w]
+            else:
+                crop_h = max(1, int(src_w / target_aspect))
+                y0 = (src_h - crop_h) // 2
+                src = src[y0:y0 + crop_h, :]
+            scr = cv2.resize(src, (sw, sh), interpolation=cv2.INTER_AREA).astype(np.float32)
         else:
             scr = np.full((sh, sw, 3), default_rgb, dtype=np.float32)
 
@@ -235,17 +295,20 @@ def _render_studio_screens(base_studio, t, plates=None):
         mask = np.zeros((y1 - y0, x1 - x0), dtype=np.float32)
         local_poly = (q - np.array([x0, y0])).astype(np.int32)
         cv2.fillConvexPoly(mask, local_poly, 1.0, lineType=cv2.LINE_AA)
-        mask = cv2.GaussianBlur(mask, (3, 3), 0.8)[:, :, None]
+        # fillConvexPoly already antialiases the boundary. Extra blur expands
+        # coverage beyond the active area and bleeds into the bezel.
+        mask = mask[:, :, None]
 
         roi_bg = studio[y0:y1, x0:x1]
         roi_warp = warped[y0:y1, x0:x1]
-        studio[y0:y1, x0:x1] = roi_bg * (1.0 - mask * 0.95) + roi_warp * (mask * 0.95)
+        # Keep the feed inside its active-area mask; the bezel remains visible.
+        studio[y0:y1, x0:x1] = roi_bg * (1.0 - mask) + roi_warp * mask
 
-    # 1. SCREEN A (Left Wall): wide cosmic Buddha B-roll
-    apply_perspective_screen([[80.0, 280.0], [460.0, 390.0], [460.0, 590.0], [80.0, 540.0]], "scr_left", [50, 70, 80])
+    # 1. SCREEN A (Left Wall): portrait cosmic Buddha B-roll
+    apply_perspective_screen(STUDIO_SCREEN_QUADS["scr_left"], "scr_left", [50, 70, 80])
 
     # 2. SCREEN B (Right Wall): Buddha portrait and mudra detail B-roll
-    apply_perspective_screen([[1460.0, 390.0], [1840.0, 280.0], [1840.0, 540.0], [1460.0, 590.0]], "scr_right", [45, 65, 30])
+    apply_perspective_screen(STUDIO_SCREEN_QUADS["scr_right"], "scr_right", [45, 65, 30])
 
     return studio
 
@@ -427,4 +490,14 @@ def render(plates, t):
         frame[:, :, 0] += 48.0 * warmth
         frame[:, :, 1] += 22.0 * warmth
     frame *= plates["vignette"]
+
+    # Give the awakened studio a short, gentle handoff to a restrained brand
+    # end card. The final two seconds fade both picture and credits to black.
+    if t >= OUTRO_TRANSITION_START and plates.get("outro_card") is not None:
+        card_mix = smooth((t - OUTRO_TRANSITION_START) / 2.0)
+        card = plates["outro_card"]
+        frame = frame * (1.0 - card_mix) + card * card_mix
+    if t >= OUTRO_FADE_START:
+        picture_fade = smooth((t - OUTRO_FADE_START) / (DURATION - OUTRO_FADE_START))
+        frame *= 1.0 - picture_fade
     return np.clip(frame, 0, 255).astype(np.uint8)

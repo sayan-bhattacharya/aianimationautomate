@@ -11,14 +11,17 @@ import numpy as np
 FPS = 24
 LOOP_SECONDS = 22
 FRAME_COUNT = FPS * LOOP_SECONDS
-FRAME_SIZE = (320, 240)
+# The source studio monitors are portrait-oriented. Build portrait feeds so
+# the compositor never has to stretch landscape Buddha footage into them.
+FRAME_SIZE = (240, 320)
 
 
 def _read_plate(path):
     image = cv2.imread(path, cv2.IMREAD_COLOR)
     if image is None:
         raise FileNotFoundError(f"Required Buddha screen plate not found: {path}")
-    return image
+    # The compositor stores and blends plates in RGB order; OpenCV loads BGR.
+    return cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
 
 def _detail_crop(image, center_x=0.52, center_y=0.43, zoom=1.8):
