@@ -1,115 +1,123 @@
-"""
-Generates the 2-screen sequential video cache for the ending telemetry studio scene:
-  - Screen A (Left Wall): Between The Notes Logo (3s) -> Dinosaur Caravan March (19s)
-  - Screen B (Right Wall): Cheetah (5s) -> Romcom (5s) -> Commercial (6s) -> White Noise (6s)
+"""Build looping Buddha-focused B-roll for the ending telemetry CRTs.
+
+Each monitor gets a distinct, slow Ken Burns loop made from the project's
+existing Buddha plates. The cache is deliberately self-contained so Colab and
+local renders use the same exact screen footage.
 """
 import os
 import cv2
 import numpy as np
 
-def build_screens_cache(output_dir=None):
-    if output_dir is None:
-        output_dir = os.path.join(os.path.dirname(__file__), "cache")
-    os.makedirs(output_dir, exist_ok=True)
-    out_npz = os.path.join(output_dir, "screens_90s.npz")
-    
-    film_dir = os.path.dirname(os.path.abspath(__file__))
-    root_dir = os.path.dirname(film_dir)
-    screens_assets_dir = os.path.join(root_dir, "assets", "screens")
-    
-    # 1. Screen A: Logo (3s = 72 frames) -> Dino (19s = 456 frames)
-    logo_path = os.path.join(screens_assets_dir, "logo_intro_3s.mp4")
-    if not os.path.exists(logo_path):
-        logo_path = os.path.join(root_dir, "logo_intro_3s.mp4")
-        
-    dino_path = os.path.join(screens_assets_dir, "dino_clean_19s.mp4")
-    if not os.path.exists(dino_path):
-        dino_path = os.path.join(root_dir, "preview_720p", "dinosaur_caravan_continuous_review_720p.mp4")
-    
-    logo_frames = []
-    if os.path.exists(logo_path):
-        cap = cv2.VideoCapture(logo_path)
-        while len(logo_frames) < 72:
-            ret, fr = cap.read()
-            if not ret or fr is None:
-                break
-            logo_frames.append(cv2.resize(fr, (320, 240)))
-        cap.release()
-    else:
-        logo_sprite = os.path.join(root_dir, "assets", "logo-circle.png")
-        base = cv2.imread(logo_sprite) if os.path.exists(logo_sprite) else np.zeros((240, 320, 3), np.uint8)
-        base = cv2.resize(base, (320, 240))
-        logo_frames = [base.copy() for _ in range(72)]
-        
-    dino_frames = []
-    if os.path.exists(dino_path):
-        cap = cv2.VideoCapture(dino_path)
-        # If using the clean 19s clip, read from frame 0; if using review 720p, offset by 240
-        if "dino_clean" in dino_path:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+FPS = 24
+LOOP_SECONDS = 22
+FRAME_COUNT = FPS * LOOP_SECONDS
+FRAME_SIZE = (320, 240)
+
+
+def _read_plate(path):
+    image = cv2.imread(path, cv2.IMREAD_COLOR)
+    if image is None:
+        raise FileNotFoundError(f"Required Buddha screen plate not found: {path}")
+    return image
+
+
+def _detail_crop(image, center_x=0.52, center_y=0.43, zoom=1.8):
+    """Create a high-resolution alternate shot from the same Buddha plate."""
+    h, w = image.shape[:2]
+    crop_w = max(16, int(w / zoom))
+    crop_h = max(16, int(h / zoom))
+    cx, cy = center_x * w, center_y * h
+    x0 = int(np.clip(cx - crop_w / 2, 0, w - crop_w))
+    y0 = int(np.clip(cy - crop_h / 2, 0, h - crop_h))
+    return image[y0:y0 + crop_h, x0:x0 + crop_w].copy()
+
+
+def _ken_burns(image, frame_index, variant=0):
+    """Aspect-preserving crop with a slow, deterministic zoom and pan."""
+    out_w, out_h = FRAME_SIZE
+    src_h, src_w = image.shape[:2]
+    aspect = out_w / out_h
+    base_w = min(src_w, int(src_h * aspect))
+    base_h = min(src_h, int(base_w / aspect))
+    phase = frame_index / float(FRAME_COUNT)
+    # Ease in/out so the loop has no abrupt pan reversal.
+    travel = 0.5 - 0.5 * np.cos(phase * 2.0 * np.pi)
+    zoom = 1.02 + 0.15 * (0.5 - 0.5 * np.cos(phase * 2.0 * np.pi))
+    crop_w = max(8, int(base_w / zoom))
+    crop_h = max(8, int(base_h / zoom))
+    center_x = src_w * (0.5 + (travel - 0.5) * (0.08 if variant == 0 else -0.06))
+    center_y = src_h * (0.5 + (travel - 0.5) * 0.035)
+    x0 = int(np.clip(center_x - crop_w / 2, 0, src_w - crop_w))
+    y0 = int(np.clip(center_y - crop_h / 2, 0, src_h - crop_h))
+    crop = image[y0:y0 + crop_h, x0:x0 + crop_w]
+    frame = cv2.resize(crop, FRAME_SIZE, interpolation=cv2.INTER_LANCZOS4)
+
+    # A restrained film transfer: slightly warm phosphor, not noisy or glitchy.
+    frame = frame.astype(np.float32)
+    frame[:, :, 2] *= 1.035
+    frame[:, :, 0] *= 0.94
+    yy, xx = np.mgrid[0:out_h, 0:out_w].astype(np.float32)
+    nx = (xx - (out_w - 1) * 0.5) / ((out_w - 1) * 0.5)
+    ny = (yy - (out_h - 1) * 0.5) / ((out_h - 1) * 0.5)
+    vignette = np.clip(1.0 - 0.11 * (nx * nx + ny * ny), 0.80, 1.0)
+    frame *= vignette[:, :, None]
+    frame[::2] *= 0.92  # soft 1970s CRT scanlines
+    return np.clip(frame, 0, 255).astype(np.uint8)
+
+
+def _make_loop(plates, variant=0):
+    frames = []
+    for i in range(FRAME_COUNT):
+        half = FRAME_COUNT // 2
+        source_a, source_b = plates
+        if i < half:
+            local = i
+            source = source_a
         else:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, 240)
-        while len(dino_frames) < 456:
-            ret, fr = cap.read()
-            if not ret or fr is None:
-                break
-            dino_frames.append(cv2.resize(fr, (320, 240)))
-        cap.release()
-    else:
-        dino_frames = [np.full((240, 320, 3), [140, 160, 180], np.uint8) for _ in range(456)]
-        
-    scr_a = (logo_frames + dino_frames)[:528]
-    while len(scr_a) < 528:
-        scr_a.append(scr_a[-1])
-        
-    # 2. Screen B: Cheetah (5s = 120) -> Romcom (5s = 120) -> Commercial (6s = 144) -> Noise (6s = 144)
-    c1_path = os.path.join(screens_assets_dir, "clip-01.mp4")
-    c2_path = os.path.join(screens_assets_dir, "clip-02.mp4")
-    c3_path = os.path.join(screens_assets_dir, "clip-03.mp4")
-    
-    # Fallback to local flow-mcp-out if assets/screens does not have them yet
-    flow_dir = r"C:\Users\sayan\flow-mcp-out\StudioScreens90s"
-    if not os.path.exists(c1_path):
-        c1_path = os.path.join(flow_dir, "clip-01.mp4")
-    if not os.path.exists(c2_path):
-        c2_path = os.path.join(flow_dir, "clip-02.mp4")
-    if not os.path.exists(c3_path):
-        c3_path = os.path.join(flow_dir, "clip-03.mp4")
-    
-    def read_frames(p, count, color):
-        res = []
-        if os.path.exists(p):
-            cap = cv2.VideoCapture(p)
-            for _ in range(count):
-                ret, fr = cap.read()
-                if not ret or fr is None:
-                    break
-                res.append(cv2.resize(fr, (320, 240)))
-            cap.release()
-        while len(res) < count:
-            res.append(np.full((240, 320, 3), color, np.uint8))
-        return res
-        
-    cheetah = read_frames(c1_path, 120, [45, 65, 30])
-    romcom = read_frames(c2_path, 120, [35, 32, 45])
-    comm = read_frames(c3_path, 144, [60, 48, 25])
-    
-    noise = []
-    for i in range(144):
-        static = np.random.randint(40, 220, (240, 320, 3), dtype=np.uint8)
-        bar_y = (i * 12) % 240
-        static[bar_y:min(240, bar_y + 18), :] = np.clip(static[bar_y:min(240, bar_y + 18), :].astype(int) + 50, 0, 255).astype(np.uint8)
-        static[::2, :] = (static[::2, :].astype(float) * 0.82).astype(np.uint8)
-        noise.append(static)
-        
-    scr_b = cheetah + romcom + comm + noise
-    
-    arr_a = np.array(scr_a, dtype=np.uint8)
-    arr_b = np.array(scr_b, dtype=np.uint8)
-    
-    np.savez_compressed(out_npz, scr_left=arr_a, scr_right=arr_b, scr1=arr_a, scr2=arr_b, scr3=arr_a, scr4=arr_b)
-    print(f"[CACHE] Built screens_90s.npz at {out_npz} ({os.path.getsize(out_npz)/1024/1024:.2f} MB)")
+            local = i - half
+            source = source_b
+        # Keep each plate on screen long enough to read, with a clean 1-second dissolve.
+        cross = FPS
+        if local < cross:
+            previous = source_b if i < half else source_a
+            a = local / float(cross)
+            current = _ken_burns(source, i, variant)
+            prior = _ken_burns(previous, (i - cross) % FRAME_COUNT, variant)
+            current = cv2.addWeighted(prior, 1.0 - a, current, a, 0.0)
+        elif local >= half - cross:
+            next_source = source_b if i < half else source_a
+            a = (local - (half - cross)) / float(cross)
+            current = _ken_burns(source, i, variant)
+            nxt = _ken_burns(next_source, (i + cross) % FRAME_COUNT, variant)
+            current = cv2.addWeighted(current, 1.0 - a, nxt, a, 0.0)
+        else:
+            current = _ken_burns(source, i, variant)
+        frames.append(current)
+    return np.asarray(frames, dtype=np.uint8)
+
+
+def build_screens_cache(output_dir=None):
+    film_dir = os.path.dirname(os.path.abspath(__file__))
+    if output_dir is None:
+        output_dir = os.path.join(film_dir, "cache")
+    os.makedirs(output_dir, exist_ok=True)
+    cache_dir = os.path.join(film_dir, "cache")
+
+    # Both programs remain unmistakably Buddha footage: a wide cosmic statue
+    # reveal on the left, and close portrait / mudra details on the right.
+    cosmic_buddha = _read_plate(os.path.join(cache_dir, "buddha_cosmic_demigod.jpg"))
+    left_plates = [cosmic_buddha, _detail_crop(cosmic_buddha, 0.52, 0.55, 1.45)]
+    right_plates = [
+        _detail_crop(cosmic_buddha, 0.52, 0.37, 2.15),
+        _detail_crop(cosmic_buddha, 0.52, 0.69, 2.45),
+    ]
+    arr_left = _make_loop(left_plates, variant=0)
+    arr_right = _make_loop(right_plates, variant=1)
+    out_npz = os.path.join(output_dir, "screens_90s.npz")
+    np.savez_compressed(out_npz, scr_left=arr_left, scr_right=arr_right)
+    print(f"[CACHE] Built Buddha B-roll CRT loops: {out_npz} ({os.path.getsize(out_npz) / 1024 / 1024:.2f} MB)")
     return out_npz
+
 
 if __name__ == "__main__":
     build_screens_cache()

@@ -29,6 +29,26 @@ from she_film.clock import (
 )
 
 _SUN_CACHE = {}
+_CRT_MAP_CACHE = {}
+
+
+def _crt_bulge(image, strength=0.055):
+    """Apply a subtle convex-glass barrel warp to the monitor's picture area."""
+    h, w = image.shape[:2]
+    key = (w, h, float(strength))
+    maps = _CRT_MAP_CACHE.get(key)
+    if maps is None:
+        yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+        nx = (xx - (w - 1) * 0.5) / max(1.0, (w - 1) * 0.5)
+        ny = (yy - (h - 1) * 0.5) / max(1.0, (h - 1) * 0.5)
+        r2 = nx * nx + ny * ny
+        # Destination-to-source mapping: content bends gently around the CRT face.
+        factor = 1.0 + strength * r2
+        map_x = ((w - 1) * 0.5 + nx * factor * (w - 1) * 0.5).astype(np.float32)
+        map_y = ((h - 1) * 0.5 + ny * factor * (h - 1) * 0.5).astype(np.float32)
+        maps = (map_x, map_y)
+        _CRT_MAP_CACHE[key] = maps
+    return cv2.remap(image, maps[0], maps[1], cv2.INTER_CUBIC, borderMode=cv2.BORDER_REFLECT_101)
 
 
 def _scaled_sun(sprite, radius, squash):
@@ -164,8 +184,8 @@ def _render_studio_screens(base_studio, t, plates=None):
     Renders front-facing Buddha telemetry suite in the redesigned 2-screen setup
     using true perspective planar homography (cv2.warpPerspective) onto calibrated
     perspective trapezoids that respect Z-axis depth vanishing geometry:
-      - Screen A (Left Wall): Between The Notes Logo -> Dinosaur Caravan sequence
-      - Screen B (Right Wall): Cheetah -> Romcom -> Commercial -> White Noise (in series)
+      - Screen A (Left Wall): wide cosmic Buddha B-roll loop
+      - Screen B (Right Wall): Buddha portrait and mudra detail loop
     """
     studio = base_studio.copy()
     screens_data = plates.get("screens_90s") if plates is not None else None
@@ -182,14 +202,19 @@ def _render_studio_screens(base_studio, t, plates=None):
 
         if screens_data is not None and frames_key in screens_data:
             frames = screens_data[frames_key]
-            f_idx = int(t * 24.0) % len(frames)
+            # Screen programs begin with the studio scene, not at song time zero.
+            f_idx = int(max(0.0, t - 420.0) * 24.0) % len(frames)
             scr = cv2.resize(frames[f_idx], (sw, sh), interpolation=cv2.INTER_AREA).astype(np.float32)
         else:
             scr = np.full((sh, sw, 3), default_rgb, dtype=np.float32)
 
+        # Curved CRT glass is simulated in the screen's own coordinates before
+        # the perspective projection maps its rectangular bezel onto the wall.
+        scr = _crt_bulge(scr)
+
         # Authentic 1990s horizontal scanlines
         scr[::2, :] *= 0.88
-        # CRT glass bulb curvature vignette (radial falloff)
+        # CRT glass falloff and phosphor lift.
         yy, xx = np.ogrid[:sh, :sw]
         nx = (xx - sw * 0.5) / (sw * 0.5)
         ny = (yy - sh * 0.5) / (sh * 0.5)
@@ -216,10 +241,10 @@ def _render_studio_screens(base_studio, t, plates=None):
         roi_warp = warped[y0:y1, x0:x1]
         studio[y0:y1, x0:x1] = roi_bg * (1.0 - mask * 0.95) + roi_warp * (mask * 0.95)
 
-    # 1. SCREEN A (Left Wall): Between The Notes Logo -> Dinosaur Caravan Sequence
+    # 1. SCREEN A (Left Wall): wide cosmic Buddha B-roll
     apply_perspective_screen([[80.0, 280.0], [460.0, 390.0], [460.0, 590.0], [80.0, 540.0]], "scr_left", [50, 70, 80])
 
-    # 2. SCREEN B (Right Wall): Cheetah -> Romcom -> Commercial -> White Noise in series
+    # 2. SCREEN B (Right Wall): Buddha portrait and mudra detail B-roll
     apply_perspective_screen([[1460.0, 390.0], [1840.0, 280.0], [1840.0, 540.0], [1460.0, 590.0]], "scr_right", [45, 65, 30])
 
     return studio
@@ -332,7 +357,9 @@ def render(plates, t):
         saucer_alt = max(0.0, float(HORIZON - cy))
         saucer_wt = min(0.92, (0.30 + 0.62 * near) * max(0.0, 1.0 - saucer_alt / 550.0))
         if saucer_wt > 0.04:
-            lamps.append((cx, saucer_wt, (190, 230, 255), 42, 220))
+            # Fifth value keeps the column broad; sixth enables craft-only ring wakes.
+            lamps.append((cx, saucer_wt, (190, 230, 255), 42, 220,
+                          0.72 * near * max(0.0, 1.0 - saucer_alt / 420.0)))
     still = max(cover, water_stillness(t))
     frame[HORIZON:] = water.paint(base, t, lamps, stillness=still, audio_feats=plates.get("audio_feats"))
     if alpha > 0.02:

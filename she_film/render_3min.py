@@ -18,6 +18,7 @@ OUTPUT = os.path.join(ROOT, "she_full_song_master.mp4")
 STILLS = os.path.join(ROOT, "stills_full_song")
 
 MARKS = [
+    (25.0, "00a_early_growth_25s"),
     (18.0, "01_title_dawn"),
     (48.0, "02_spores"),
     (88.0, "03_mushroom_bloom"),
@@ -25,10 +26,15 @@ MARKS = [
     (174.0, "05_saucer_landing"),
     (194.0, "06_night_launch"),
     (230.0, "07_vegetation_to_forest"),
+    (260.0, "07a_dinosaur_reflection_260s"),
     (270.0, "08_dinosaur_grazing_marine_life"),
+    (307.0, "08a_crimson_transition_307s"),
     (310.0, "09_second_moonrise"),
+    (390.0, "10a_late_caravan_390s"),
     (380.0, "10_cosmic_demigod_vr_waveform"),
+    (420.0, "11a_studio_screen_start_420s"),
     (426.0, "11_matrix_glitch_tearing"),
+    (430.0, "11b_studio_screen_motion_430s"),
     (438.0, "12_retro_telemetry_studio_animated_screens"),
 ]
 

@@ -172,14 +172,31 @@ def run_pre_render_code_review():
     # -------------------------------------------------------------
     # 8. SCREEN 7 AUDIT: Telemetry Studio Redesign 2-Screen Fitting
     # -------------------------------------------------------------
-    print("\n--- 8. Screen 7 Audit (1970s Studio Flow AI CRT Screens Fitting) ---")
+    print("\n--- 8. Screen 7 Audit (Buddha B-roll on curved studio CRTs) ---")
     frame_src = open(frame.__file__, encoding="utf-8").read()
     if "apply_perspective_screen([[80.0, 280.0], [460.0, 390.0], [460.0, 590.0], [80.0, 540.0]], \"scr_left\"" in frame_src and \
        "apply_perspective_screen([[1460.0, 390.0], [1840.0, 280.0], [1840.0, 540.0], [1460.0, 590.0]], \"scr_right\"" in frame_src:
-        record_pass("S7.1", "2-Screen Studio setup calibrated with perspective homography", 
-                    "Screen A (Logo->Dino): [[80,280],[460,390],[460,590],[80,540]], Screen B (Cheetah->Romcom->Comm->Noise): [[1460,390],[1840,280],[1840,540],[1460,590]]")
+        record_pass("S7.1", "Two studio CRTs retain calibrated perspective geometry",
+                    "Left [[80,280],[460,390],[460,590],[80,540]], right [[1460,390],[1840,280],[1840,540],[1460,590]]")
     else:
         record_fail("S7.1", "CRT monitor screen geometry in frame.py", "exact screen coordinates not found")
+
+    screen_feeds = p.get("screens_90s")
+    feeds_ok = screen_feeds is not None and all(k in screen_feeds for k in ("scr_left", "scr_right"))
+    if feeds_ok:
+        left_feed, right_feed = screen_feeds["scr_left"], screen_feeds["scr_right"]
+        dynamic = all(
+            feed.ndim == 4 and len(feed) >= 240 and feed.shape[1:] == (240, 320, 3)
+            and float(np.mean(np.abs(feed[0].astype(np.float32) - feed[len(feed) // 2].astype(np.float32)))) > 2.0
+            for feed in (left_feed, right_feed)
+        )
+        if dynamic:
+            record_pass("S7.2", "Both CRT feeds contain moving Buddha B-roll",
+                        f"left={len(left_feed)} frames, right={len(right_feed)} frames")
+        else:
+            record_fail("S7.2", "Dynamic Buddha B-roll feeds", "missing, static, or invalid screen frames")
+    else:
+        record_fail("S7.2", "Dynamic Buddha B-roll feeds", "screens_90s.npz is missing one or both feeds")
 
     print("\n" + "=" * 80)
     print(f"AUDIT SUMMARY: {passes} PASSED | {failures} FAILED | {warnings} WARNINGS")

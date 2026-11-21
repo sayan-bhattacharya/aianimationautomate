@@ -110,17 +110,17 @@ def title_lines(t):
 
 
 def visit(t):
-    """Alien saucer descends from the dark lunar limb, lands, then launches."""
+    """Craft enters from the western horizon, skims the sea, then climbs east."""
     if not 166.0 <= t < 207.0:
         return None
-    land_x, land_y = 1120.0, float(HORIZON - 96)
-    if t < 180.0:
-        p = smooth((t - 166.0) / 14.0)
-        return lerp(1580.0, land_x, p), lerp(30.0, land_y, p), lerp(0.1, 1.0, p)
-    if t < 187.0:
-        return land_x, land_y, 1.0
-    p = smooth((t - 187.0) / 20.0)
-    return lerp(land_x, 1740.0, p), lerp(land_y, 20.0, p), lerp(1.0, 0.12, p)
+    if t < 181.0:
+        p = smooth((t - 166.0) / 15.0)
+        return lerp(-120.0, 520.0, p), lerp(250.0, HORIZON - 24.0, p), lerp(0.12, 0.82, p)
+    if t < 192.0:
+        p = smooth((t - 181.0) / 11.0)
+        return lerp(520.0, 1270.0, p), HORIZON - 24.0 + 6.0 * math.sin(math.pi * p), lerp(0.82, 1.0, p)
+    p = smooth((t - 192.0) / 15.0)
+    return lerp(1270.0, 2040.0, p), lerp(HORIZON - 24.0, 38.0, p), lerp(1.0, 0.12, p)
 
 
 def colony(t):

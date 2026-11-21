@@ -22,7 +22,9 @@ def paint(base_row, t, lamps, stillness=0.0, audio_feats=None):
         frame_idx = min(len(audio_feats) - 1, max(0, int(t * 24)))
         note_energy = float(audio_feats[frame_idx, 9] * 0.70 + audio_feats[frame_idx, 5] * 0.30)
     
-    for origin_x, weight, rgb, width0, width1 in lamps:
+    for lamp in lamps:
+        origin_x, weight, rgb, width0, width1 = lamp[:5]
+        ripple_strength = float(lamp[5]) if len(lamp) > 5 else 0.0
         if weight < 0.03 or origin_x is None:
             continue
         wobble = wave_factor * (
@@ -40,6 +42,17 @@ def paint(base_row, t, lamps, stillness=0.0, audio_feats=None):
             crest = np.clip(np.sin(QY * 0.55 + np.sin(QX * 0.05 + t * 0.7) + t * 0.4) - 0.72, 0, 1) * wave_factor
             near = np.exp(-0.5 * ((QX - origin_x / STEP) / (half * 0.9 + 1)) ** 2)
             wq += (crest * near * weight)[:, :, None] * tint * 0.35
+
+        # A low craft adds broad concentric disturbances around its marine coordinate.
+        if ripple_strength > 0.001:
+            cx = origin_x / STEP
+            cy = 8.0
+            dx = QX - cx
+            dy = (QY - cy) * 2.4
+            radius = np.hypot(dx, dy)
+            rings = np.sin(radius * 0.20 - t * 4.2) * np.exp(-radius / 54.0)
+            ring_mask = np.clip(rings, 0.0, 1.0) * ripple_strength * wave_factor
+            wq += ring_mask[:, :, None] * tint[None, None, :] * 0.34
 
     # Audio-reactive acoustic ocean ripples: radiating concentric wave perturbations highlighting musical notes
     # Sparser spatial frequency (wavelength ~60px) for clean, non-crowded organic ripples

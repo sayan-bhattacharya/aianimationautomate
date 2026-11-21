@@ -3,7 +3,7 @@ import math
 import cv2
 import numpy as np
 
-from she_film.clock import HEIGHT, HORIZON, WIDTH, lerp, smooth
+from she_film.clock import HEIGHT, HORIZON, WIDTH, lerp, smooth, sky_weights
 
 
 def over(frame, sprite, x, y, alpha=1.0):
@@ -209,17 +209,38 @@ def birds(frame, plates, t, amount):
         rot_ptero = cv2.warpAffine(ptero, M_ptero, (pw, ph), borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0, 0))
         over(frame, rot_ptero, p_x - pw / 2, p_y - ph / 2, min(0.95, 0.45 + 0.5 * amount))
 
-        # Pterodactyl reflection in ocean waves
-        p_ref_y = HORIZON + int((HORIZON - p_y) * 0.42 + math.sin(t * 2.5 + p_x * 0.03) * 6)
-        p_ref_x = int(p_x - pw / 2)
-        if HORIZON <= p_ref_y < HEIGHT - ph:
-            p_ref_fade = np.linspace(0.35, 0.05, ph, dtype=np.float32)[:, None, None]
-            p_flip = rot_ptero[::-1].copy()
-            p_flip[:, :, 3:4] *= p_ref_fade
-            over(frame, p_flip, p_ref_x, p_ref_y, 0.4)
+        pterodactyl_reflect(frame, rot_ptero, p_x, p_y, t, min(0.95, 0.45 + 0.5 * amount))
 
     # Note: Marine animals (flying fish, plesiosaur, leviathan) temporarily removed per creative plan
     # for dedicated multi-frame Flow animation enhancement.
+
+
+def pterodactyl_reflect(frame, sprite, center_x, sky_y, t, alpha=0.65, stillness=0.0):
+    """Paint a compressed, altitude-shifted flying-reptile reflection on the sea."""
+    if sprite is None or alpha < 0.02:
+        return
+    sh, sw = sprite.shape[:2]
+    altitude = max(0.0, HORIZON - float(sky_y))
+    # Higher flight produces a shorter, more displaced reflection with a wider ripple.
+    scale_y = float(np.clip(0.48 - altitude / 1800.0, 0.24, 0.48))
+    ref_h = max(8, int(sh * scale_y))
+    ref_y = HORIZON + int(altitude * 0.46)
+    wave = max(0.0, 1.0 - float(stillness))
+    wobble = math.sin(t * 3.1 + center_x * 0.024) * (11.0 + altitude * 0.012) * wave
+    ref_w = max(8, int(sw * (0.92 + 0.08 * scale_y)))
+    reflection = cv2.resize(sprite[::-1], (ref_w, ref_h), interpolation=cv2.INTER_AREA).copy()
+
+    day, warm, night = sky_weights(t)
+    tint = (np.array([56, 76, 92], np.float32) * day
+            + np.array([110, 70, 42], np.float32) * warm
+            + np.array([38, 88, 154], np.float32) * night)
+    reflection[:, :, :3] = np.clip(reflection[:, :, :3] * 0.30 + tint, 0, 255)
+    fresnel = float(np.clip(1.0 - altitude / 1100.0, 0.25, 0.85))
+    fade = np.linspace(0.42, 0.015, ref_h, dtype=np.float32)[:, None, None]
+    ripple = 0.72 + 0.28 * np.sin(np.arange(ref_h, dtype=np.float32)[:, None, None] * 0.36 + t * 4.0)
+    reflection[:, :, 3:4] *= fade * ripple * fresnel
+    if ref_y < HEIGHT - 1:
+        over(frame, reflection, center_x - ref_w / 2 + wobble, ref_y, alpha * fresnel * 0.62)
 
 
 def _draw_grazing_sauropod(frame, x, y, neck_bend, t):
