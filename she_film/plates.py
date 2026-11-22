@@ -299,11 +299,7 @@ def _refine_forest_cutout(image, remove_specks=False):
             keep[label] = stats[label, cv2.CC_STAT_AREA] >= 60
         alpha[~keep[labels]] = 0
 
-    # Decontaminate only semi-transparent edge colors from the source plate;
-    # retain the authored alpha so foliage texture and branch gaps stay intact.
-    edge = ((alpha > 0) & (alpha < 250)).astype(np.uint8) * 255
-    if np.any(edge):
-        rgba[:, :, :3] = cv2.inpaint(rgba[:, :, :3], edge, 2.0, cv2.INPAINT_TELEA)
+    # Retain the authored alpha so foliage texture and branch gaps stay intact.
     rgba[:, :, 3] = cv2.GaussianBlur(alpha, (0, 0), 0.35)
 
     ys, xs = np.where(rgba[:, :, 3] > 4)

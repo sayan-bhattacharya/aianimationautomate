@@ -463,9 +463,30 @@ def forest(frame, plates, t, presence, decay=0.0, depth_layers=None, respect_rid
         # Align the source concept's five-tree rhythm to the established mushroom anchors.
         root_rows = plates.get("forest_root_rows", ())
         root_row = root_rows[index] if index < len(root_rows) else h
-        left, top = int(x - w / 2), ground_y - root_row
+        # Seat root base 5px into the soil so root spurs firmly penetrate the beach sand
+        left, top = int(x - w / 2), ground_y - root_row + 5
+
+        # Seamless Root Integration into Beach Soil:
+        # Mask each column of the root flare to conform to the local ridge dune contour
+        layers = plates.get("ridge_surface_layers")
+        if layers is not None and depth < len(layers):
+            surf = layers[depth]
+            for c in range(w):
+                xw = np.clip(left + c, 0, WIDTH - 1)
+                y_soil = surf[xw]
+                r_soil = int(y_soil - top)
+                if 0 <= r_soil < h:
+                    depth_in_sand = np.arange(h - r_soil, dtype=np.float32)
+                    sprite[r_soil:, c, 3] *= np.clip(1.0 - depth_in_sand / 5.0, 0.0, 1.0)
+                elif r_soil < 0:
+                    sprite[:, c, 3] = 0.0
+
         if respect_ridges:
             sprite[:, :, 3] *= _ridge_visibility_mask(plates, depth, left, top, w, h)
+
+        # Soft sand contact shadow under the roots along the terrain surface
+        cv2.ellipse(frame, (int(x), int(ground_y + 1)), (int(w * 0.28), 6), 0, 0, 360, (18, 16, 12), -1, cv2.LINE_AA)
+
         over(frame, sprite, left, top, tree_presence)
 
 
