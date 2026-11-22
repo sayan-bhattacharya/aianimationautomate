@@ -1,9 +1,4 @@
-"""Build looping Buddha-focused B-roll for the ending telemetry CRTs.
-
-Each monitor gets a distinct, slow Ken Burns loop made from the project's
-existing Buddha plates. The cache is deliberately self-contained so Colab and
-local renders use the same exact screen footage.
-"""
+"""Build distinct B-roll loops for the four ending telemetry CRTs."""
 import os
 import cv2
 import numpy as np
@@ -99,6 +94,91 @@ def _make_loop(plates, variant=0):
     return np.asarray(frames, dtype=np.uint8)
 
 
+def _dinosaur_plate(asset_path):
+    """Make a closed-loop forest-floor dinosaur plate from the alpha sprite."""
+    sprite = cv2.imread(asset_path, cv2.IMREAD_UNCHANGED)
+    if sprite is None or sprite.ndim != 3 or sprite.shape[2] != 4:
+        raise FileNotFoundError(f"Required dinosaur screen asset not found: {asset_path}")
+    sprite = cv2.cvtColor(sprite, cv2.COLOR_BGRA2RGBA)
+    out_w, out_h = FRAME_SIZE
+    frames = []
+    for i in range(FRAME_COUNT):
+        # Include the identical start pose at the end of the cache. This makes
+        # the actual frame N-1 -> frame 0 transition exact, not just close.
+        phase = 2.0 * np.pi * i / max(1, FRAME_COUNT - 1)
+        half_phase = np.pi * i / max(1, FRAME_COUNT - 1)
+        yy, xx = np.mgrid[0:out_h, 0:out_w].astype(np.float32)
+        sky = np.zeros((out_h, out_w, 3), dtype=np.float32)
+        # Gentle diurnal light drift across the wildlife habitat
+        sun_shift = np.sin(half_phase)
+        sky[:, :, 0] = 31 + 18 * (yy / out_h) + 14.0 * sun_shift
+        sky[:, :, 1] = 65 + 42 * (yy / out_h) + 18.0 * sun_shift
+        sky[:, :, 2] = 47 + 18 * (yy / out_h) + 8.0 * sun_shift
+        # Distant forest silhouettes and a softly lit clearing.
+        ridge = (190 + 8 * np.sin(xx * 0.025 + phase)
+                 + 3 * np.sin(xx * 0.057 + 2.0 * phase))
+        forest = yy > ridge
+        sky[forest] *= np.array([0.54, 0.73, 0.55], dtype=np.float32)
+        sky[yy >= 252] *= np.array([0.63, 0.67, 0.48], dtype=np.float32)
+        sh, sw = sprite.shape[:2]
+        scale = 0.82
+        nw, nh = int(sw * scale), int(sh * scale)
+        dino = cv2.resize(sprite, (nw, nh), interpolation=cv2.INTER_CUBIC)
+        # The animal walks in place with a gentle slow traverse and weight shift.
+        x = int(round((out_w - nw) * 0.5 + 8.0 * np.sin(half_phase)))
+        y = 223 + int(round(1.5 * (1.0 - np.cos(4.0 * phase)))) - nh
+        x0, y0 = max(0, x), max(0, y)
+        x1, y1 = min(out_w, x + nw), min(out_h, y + nh)
+        if x1 > x0 and y1 > y0:
+            crop = dino[y0-y:y1-y, x0-x:x1-x]
+            alpha = crop[:, :, 3:4].astype(np.float32) / 255.0
+            sky[y0:y1, x0:x1] = sky[y0:y1, x0:x1] * (1.0 - alpha) + crop[:, :, :3] * alpha
+        frame = np.clip(sky, 0, 255).astype(np.uint8)
+        cv2.putText(frame, "WILDLIFE FIELD NOTES", (9, 18), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.31, (229, 223, 190), 1, cv2.LINE_AA)
+        frames.append(frame)
+    return np.asarray(frames, dtype=np.uint8)
+
+
+def _channel_hop_loop():
+    """A playful channel surf: warm rom-com, analog snow, and wildlife."""
+    out_w, out_h = FRAME_SIZE
+    frames = []
+    for i in range(FRAME_COUNT):
+        section = (i * 3) // FRAME_COUNT
+        if section == 0:
+            yy, xx = np.mgrid[0:out_h, 0:out_w].astype(np.float32)
+            glow = np.clip(1.0 - ((xx - out_w * .52) ** 2 / 15000 + (yy - out_h * .44) ** 2 / 26000), 0, 1)
+            frame = np.zeros((out_h, out_w, 3), dtype=np.float32)
+            frame[:] = [48, 32, 63]
+            frame += glow[:, :, None] * np.array([158, 108, 83], dtype=np.float32)
+            cv2.circle(frame, (out_w // 2 - 19, 208), 24, (37, 30, 50), -1, cv2.LINE_AA)
+            cv2.circle(frame, (out_w // 2 + 19, 208), 24, (37, 30, 50), -1, cv2.LINE_AA)
+            cv2.putText(frame, "TONIGHT ON LOVE TV", (12, 22), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.32, (255, 231, 205), 1, cv2.LINE_AA)
+        elif section == 1:
+            rng = np.random.default_rng(i)
+            frame = rng.integers(0, 256, (out_h, out_w, 3), dtype=np.uint8)
+            frame = cv2.blur(frame, (1, 3))
+            for y in range(28, out_h, 41):
+                if (i + y) % 3:
+                    cv2.line(frame, (0, y), (out_w - 1, y), (220, 220, 220), 1)
+            cv2.putText(frame, "NO SIGNAL", (64, 170), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.45, (255, 255, 255), 1, cv2.LINE_AA)
+        else:
+            frame = np.zeros((out_h, out_w, 3), dtype=np.uint8)
+            frame[:, :] = [28, 58, 66]
+            cv2.rectangle(frame, (0, 218), (out_w, out_h), (39, 83, 62), -1)
+            for j in range(4):
+                x = (j * 83 + i * 2) % (out_w + 50) - 25
+                cv2.ellipse(frame, (x, 165 + 7 * (j % 2)), (28, 17), 0, 0, 360,
+                            (95, 131, 86), -1, cv2.LINE_AA)
+            cv2.putText(frame, "NATIONAL GEOGRAPHIC", (8, 20), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.27, (248, 225, 166), 1, cv2.LINE_AA)
+        frames.append(np.clip(frame, 0, 255).astype(np.uint8))
+    return np.asarray(frames, dtype=np.uint8)
+
+
 def build_screens_cache(output_dir=None):
     film_dir = os.path.dirname(os.path.abspath(__file__))
     if output_dir is None:
@@ -106,18 +186,21 @@ def build_screens_cache(output_dir=None):
     os.makedirs(output_dir, exist_ok=True)
     cache_dir = os.path.join(film_dir, "cache")
 
-    # Both programs remain unmistakably Buddha footage: a wide cosmic statue
-    # reveal on the left, and close portrait / mudra details on the right.
+    # Assign distinct programs to all four monitors.
     cosmic_buddha = _read_plate(os.path.join(cache_dir, "buddha_cosmic_demigod.jpg"))
-    left_plates = [cosmic_buddha, _detail_crop(cosmic_buddha, 0.52, 0.55, 1.45)]
+    meditation = _read_plate(os.path.join(cache_dir, "buddha_human_face_meditating.jpg"))
+    left_plates = [meditation, _detail_crop(meditation, 0.52, 0.49, 1.25)]
     right_plates = [
         _detail_crop(cosmic_buddha, 0.52, 0.37, 2.15),
         _detail_crop(cosmic_buddha, 0.52, 0.69, 2.45),
     ]
     arr_left = _make_loop(left_plates, variant=0)
     arr_right = _make_loop(right_plates, variant=1)
+    arr_dino = _dinosaur_plate(os.path.join(cache_dir, "flow_pokemon_dino_scaled.png"))
+    arr_channels = _channel_hop_loop()
     out_npz = os.path.join(output_dir, "screens_90s.npz")
-    np.savez_compressed(out_npz, scr_left=arr_left, scr_right=arr_right)
+    np.savez_compressed(out_npz, scr_left=arr_left, scr_mid_left=arr_dino,
+                        scr_mid_right=arr_channels, scr_right=arr_right)
     print(f"[CACHE] Built Buddha B-roll CRT loops: {out_npz} ({os.path.getsize(out_npz) / 1024 / 1024:.2f} MB)")
     return out_npz
 

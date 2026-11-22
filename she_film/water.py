@@ -1,4 +1,5 @@
-"""Glitter paths. A lamp below the horizon leaves no path."""
+"""Anti-aliased ocean shimmer and soft light paths below the horizon."""
+import cv2
 import numpy as np
 
 from she_film.clock import HEIGHT, HORIZON, WIDTH
@@ -35,13 +36,14 @@ def paint(base_row, t, lamps, stillness=0.0, audio_feats=None):
         dist = np.abs(QX - path_x)
         mask = np.exp(-0.5 * (dist / (half * 0.42 + 0.4)) ** 2) * (1.0 - QF * 0.22) * weight
         tint = np.array(rgb, dtype=np.float32)
-        wq = wq * (1.0 - mask[:, :, None] * 0.72) + tint * (mask[:, :, None] * 0.72)
+        reflection_mix = mask[:, :, None] * 0.36
+        wq = wq * (1.0 - reflection_mix) + tint * reflection_mix
         
         # Crest highlights flatten out completely when still
         if wave_factor > 0.01:
             crest = np.clip(np.sin(QY * 0.55 + np.sin(QX * 0.05 + t * 0.7) + t * 0.4) - 0.72, 0, 1) * wave_factor
             near = np.exp(-0.5 * ((QX - origin_x / STEP) / (half * 0.9 + 1)) ** 2)
-            wq += (crest * near * weight)[:, :, None] * tint * 0.35
+            wq += (crest * near * weight)[:, :, None] * tint * 0.16
 
         # A low craft adds broad concentric disturbances around its marine coordinate.
         if ripple_strength > 0.001:
@@ -64,25 +66,32 @@ def paint(base_row, t, lamps, stillness=0.0, audio_feats=None):
             wave_phase = np.sin(d_ellipse * 0.11 - t * 3.2)
             decay = np.exp(-0.5 * (d_ellipse / 68.0) ** 2) * (1.0 - QF * 0.22)
             # Smooth acoustic amplitude
-            amp = (0.05 + 0.42 * note_energy) * wave_factor
+            amp = (0.025 + 0.24 * note_energy) * wave_factor
             sig = wave_phase * decay * amp
             pos_crest = np.clip(sig, 0, 0.40)
             neg_trough = np.clip(-sig, 0, 0.30)
-            cyan_tint = np.array([175, 235, 250], dtype=np.float32)
-            wq += pos_crest[:, :, None] * cyan_tint * 0.40
-            wq -= neg_trough[:, :, None] * 14.0
+            cyan_tint = np.array([145, 190, 202], dtype=np.float32)
+            wq += pos_crest[:, :, None] * cyan_tint * 0.22
+            wq -= neg_trough[:, :, None] * 7.0
 
-    # Sparser wave line ripples: 8 elegant, widely spaced wave crest lines (reduced from 16)
+    # Only a few low-contrast broad crests; most of the surface stays visually quiet.
     if wave_factor > 0.01:
-        ink = np.array([150, 205, 214], dtype=np.float32) * wave_factor
+        ink = np.array([112, 154, 162], dtype=np.float32) * wave_factor
         xs = np.arange(QW)
-        for k in range(8):
-            prog = ((k / 8.0) + (t * 0.025) % 1.0) % 1.0
+        for k in range(5):
+            prog = ((k / 5.0) + (t * 0.012) % 1.0) % 1.0
             yb = int(QH * (prog ** 1.35))
-            amp = (1.4 + 2.8 * prog) * wave_factor
+            amp = (0.7 + 1.2 * prog) * wave_factor
             # Modulate wave crest perturbation slightly with note resonance
             amp_mod = amp * (1.0 + 0.35 * note_energy)
-            yy = np.clip((yb + amp_mod * np.sin(xs * 0.08 + t * 0.7 + k * 1.2)).astype(np.int32), 0, QH - 1)
-            wq[yy, xs] = wq[yy, xs] * (1.0 - 0.35 * wave_factor) + ink * 0.35
+            line_y = yb + amp_mod * np.sin(xs * 0.045 + t * 0.35 + k * 1.2)
+            # Gaussian subpixel coverage avoids quantized 4px scanline steps.
+            # Keep the crests broad and low contrast so the surface reads as
+            # moving water, not a stack of graphic contour lines.
+            coverage = np.exp(-0.5 * ((QY - line_y[None, :]) / 0.72) ** 2)
+            line_mix = (0.14 * wave_factor * coverage)[:, :, None]
+            wq = wq * (1.0 - line_mix) + ink[None, None, :] * line_mix
             
-    return np.repeat(np.repeat(wq, STEP, 0), STEP, 1)[: HEIGHT - HORIZON, :WIDTH]
+    # Bilinear reconstruction removes the four-pixel staircase on wave crests
+    # while keeping the temporal wave field and broad reflections continuous.
+    return cv2.resize(wq, (WIDTH, HEIGHT - HORIZON), interpolation=cv2.INTER_LINEAR)

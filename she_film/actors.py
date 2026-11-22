@@ -3,10 +3,55 @@ import math
 import cv2
 import numpy as np
 
-from she_film.clock import HEIGHT, HORIZON, WIDTH, crimson, lerp, moon, smooth, sky_weights, sun
+from she_film import mirage
+from she_film.clock import (
+    FIR_EMERGENCE_END,
+    FIR_EMERGENCE_START,
+    HEIGHT,
+    HORIZON,
+    WIDTH,
+    crimson,
+    lerp,
+    moon,
+    smooth,
+    sky_weights,
+    sun,
+)
 
-PTERO_WING_CYCLE_START = 147
-PTERO_WING_CYCLE_END = 175  # exclusive: 28-frame, 1.17s repeat with matching wing pose
+PTERO_WING_CYCLE_START = 126
+PTERO_WING_CYCLE_END = 158  # exclusive: 32-frame, 1.33s full flap with matching wing pose
+
+# Visually matched walking spans, selected away from the source clips' abrupt
+# first/last poses. End indices are exclusive.
+DINO_WALK_CYCLES = {0: (122, 191), 1: (85, 158), 2: (0, 48), 3: (37, 153)}
+
+
+def _dino_walk_frame(anim, dino_id, t):
+    if anim is None or anim.n_frames == 0:
+        return None
+    start, end = DINO_WALK_CYCLES.get(dino_id, (0, anim.n_frames))
+    end = min(end, anim.n_frames)
+    frames = anim.frames[start:end]
+    if len(frames) < 2:
+        return frames[0] if frames else anim.get_frame(t)
+    # Start motion when the off-screen procession begins entering at 232s.
+    # The frame-edge fade therefore reveals a walk already in progress.
+    pos = (max(0.0, t - 232.0) * 24.0) % len(frames)
+    i = int(pos)
+    frac = pos - i
+    nxt = (i + 1) % len(frames)
+    current = frames[i] * (1.0 - frac) + frames[nxt] * frac
+    return current.astype(np.float32, copy=False)
+
+
+def _edge_presence(x, sprite_width):
+    """Ease sprites in/out over one sprite-width as they cross the frame edge."""
+    half = sprite_width * 0.5
+    if x < half:
+        return smooth((x + half) / max(1.0, sprite_width))
+    if x > WIDTH - half:
+        return smooth((WIDTH + half - x) / max(1.0, sprite_width))
+    return 1.0
 
 
 def pterodactyl_loop_frames(anim_ptero):
@@ -66,6 +111,26 @@ def over(frame, sprite, x, y, alpha=1.0):
     dst += (crop[:, :, :3] - dst) * a
 
 
+def _water_wave_refraction(reflection, t, anchor_x, wave_factor, audio_feats, phase=0.0):
+    """Break a mirrored actor silhouette along moving, music-responsive wavelets."""
+    if reflection is None or wave_factor < 0.01:
+        return reflection
+    h, w = reflection.shape[:2]
+    energy = mirage.music_energy(audio_feats, t)
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+    depth = np.clip(yy / max(1.0, h - 1.0), 0.0, 1.0)
+    phase_field = yy * 0.19 + xx * 0.018 + float(t) * 1.7 + anchor_x * 0.007 + phase
+    dx = wave_factor * (1.1 + 3.2 * energy) * depth * np.sin(phase_field)
+    dy = wave_factor * 0.32 * depth * np.sin(xx * 0.026 - float(t) * 1.25 + phase)
+    map_x = np.clip(xx - dx, 0, w - 1).astype(np.float32)
+    map_y = np.clip(yy + dy, 0, h - 1).astype(np.float32)
+    out = cv2.remap(reflection, map_x, map_y, cv2.INTER_LINEAR,
+                    borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0, 0))
+    crest = np.abs(np.sin(phase_field * 0.62))
+    out[:, :, 3] *= 1.0 - wave_factor * (0.045 + 0.055 * energy) * crest
+    return out
+
+
 def stars(frame, plates, t, night, moon_body):
     """Twinkle. Moonlight quiets them, most of all the ones beside the moon."""
     if night < 0.08:
@@ -118,23 +183,57 @@ def snow(frame, plates, t, amount, moon_body, ship_body):
 
 
 MUSHROOM_STANDS = [
-    (340, 24.0, 0.75),   # Leftmost Stand (starts wave, x=340)
-    (640, 20.0, 1.15),   # Hero Center-Left Stand (x=640)
-    (980, 28.0, 0.70),   # Center-Right Stand (x=980)
-    (1260, 50.0, 1.05),  # East Stand (x=1260)
-    (1540, 54.0, 0.65),  # Far East Stand (x=1540)
+    (340, 24.0, 0.75),   # Stand 0: Leftmost Stand (starts wave, x=340)
+    (640, 20.0, 1.15),   # Stand 1: Hero Center-Left Stand (x=640)
+    (980, 28.0, 0.70),   # Stand 2: Center-Right Stand (x=980)
+    (1260, 50.0, 1.15),  # Stand 3: 4th Mushroom (Hero East Stand, x=1260) - becomes larger and holds
+    (1540, 54.0, 0.65),  # Stand 4: Far East Stand (x=1540)
 ]
-MUSHROOM3_TARGET_INDEX = 2
+MUSHROOM_HOLD_INDICES = (2, 3)  # Both Stand 2 and Stand 3 (4th mushroom) reach mature size and hold permanently
 MUSHROOM_GROWTH_SECONDS = 8.0
+MUSHROOM2_DECAY_HOLD_END = 12.0
+MUSHROOM2_DECAY_END = 20.0
+MUSHROOM2_FINAL_DECAY_SCALE = 0.68
 
 
-def mushroom3_target_frame(growth_sprite, age):
-    """Use the Scene 1 growth sequence, then hold its exact terminal frame."""
+def mushroom_target_frame(growth_sprite, age):
+    """Use the Scene 1 growth sequence, then hold its exact terminal mature frame."""
     if growth_sprite is None or growth_sprite.n_frames == 0:
         return None
     if age < MUSHROOM_GROWTH_SECONDS:
         return growth_sprite.get_frame(age, loop=False)
     return growth_sprite.frames[-1]
+
+
+def mushroom2_lifecycle_frame(plates, age):
+    """Hold Mushroom 2 at maturity, then visibly shrink and wither in place."""
+    growth = plates.get("anim_mushroom_growth")
+    if growth is None or not growth.n_frames:
+        return None, 1.0
+    if age < MUSHROOM_GROWTH_SECONDS:
+        return growth.get_frame(age, loop=False), 1.0
+    mature = growth.frames[-1]
+    if age <= MUSHROOM2_DECAY_HOLD_END:
+        return mature, 1.0
+
+    p = smooth((age - MUSHROOM2_DECAY_HOLD_END) /
+               (MUSHROOM2_DECAY_END - MUSHROOM2_DECAY_HOLD_END))
+    decayed = mature.astype(np.float32).copy()
+    rgb = decayed[:, :, :3]
+    luminance = np.mean(rgb, axis=2, keepdims=True)
+    rgb = (rgb * (1.0 - 0.38 * p) + luminance * (0.38 * p)) * (1.0 - 0.12 * p)
+    rgb += p * np.array([4.0, 1.5, -2.0], dtype=np.float32)
+    decayed[:, :, :3] = np.clip(rgb, 0.0, 255.0)
+    # Crown-first loss of opacity suggests withering; roots remain present and grounded.
+    crown_to_root = np.linspace(0.90, 0.10, decayed.shape[0], dtype=np.float32)[:, None]
+    decayed[:, :, 3] *= 1.0 - p * crown_to_root
+    decay_scale = 1.0 - (1.0 - MUSHROOM2_FINAL_DECAY_SCALE) * p
+    return decayed, decay_scale
+
+
+# Backward compatibility alias
+mushroom3_target_frame = mushroom_target_frame
+MUSHROOM3_TARGET_INDEX = 2
 
 
 def _get_active_mushroom_stands(plates, t):
@@ -145,7 +244,7 @@ def _get_active_mushroom_stands(plates, t):
     """
     vs_growth = plates.get("anim_mushroom_growth")
     vs_idle = plates.get("anim_mushroom_idle")
-    base_y = HORIZON - 72
+    ground_profile = plates.get("ridge_surface_y")
 
     stands = []
     if vs_growth is None or vs_idle is None:
@@ -166,22 +265,30 @@ def _get_active_mushroom_stands(plates, t):
         # Delay propagates from leftmost stand (x=340) to rightmost stand (x=1540)
         wave_delay = (x - 340.0) / 380.0
         
-        if age < MUSHROOM_GROWTH_SECONDS:
-            raw = (mushroom3_target_frame(vs_growth, age)
-                   if stand_index == MUSHROOM3_TARGET_INDEX
+        if stand_index == 1:
+            raw, decay_scale = mushroom2_lifecycle_frame(plates, age)
+            grow_scale *= decay_scale
+            decay_amount = smooth((age - MUSHROOM2_DECAY_HOLD_END) /
+                                  (MUSHROOM2_DECAY_END - MUSHROOM2_DECAY_HOLD_END))
+            a_fade = min(1.0, age / 0.8) * (1.0 - 0.25 * decay_amount)
+        elif age < MUSHROOM_GROWTH_SECONDS:
+            raw = (mushroom_target_frame(vs_growth, age)
+                   if stand_index in MUSHROOM_HOLD_INDICES
                    else vs_growth.get_frame(age, loop=False))
             a_fade = min(1.0, age / 0.8)
-        elif stand_index == MUSHROOM3_TARGET_INDEX:
-            # Mushroom 3 resolves to the exact terminal image from Mushroom
-            # Growth Scene 1. The growth clip itself provides the continuous
-            # transition; holding its last decoded frame avoids a shape jump
-            # into the unrelated idle-loop mushroom family at age 8 seconds.
-            raw = mushroom3_target_frame(vs_growth, age)
+        elif stand_index in MUSHROOM_HOLD_INDICES:
+            # Stand 2 and Stand 3 (4th mushroom) resolve to the exact terminal mature frame
+            # from Mushroom Growth Scene 1 and remain held permanently at full size with
+            # continuous reflection integration, never shrinking back into a sprout.
+            raw = mushroom_target_frame(vs_growth, age)
             a_fade = 1.0
         else:
             # Minimized frequency (0.45x) and neighbor wave phase delay
-            idle_t = ((age - 8.0) * 0.45 - wave_delay) % 8.0
-            raw = vs_idle.get_frame(idle_t, loop=True)
+            # Ping-pong the Flow life-cycle plate: mature -> gradual decay ->
+            # small -> regrowth. It never wraps mature directly to a sprout.
+            phase = (8.0 - wave_delay + max(0.0, age - 8.0) * 0.45) % 16.0
+            idle_t = phase if phase <= 8.0 else 16.0 - phase
+            raw = vs_idle.get_frame(idle_t, loop=False)
             a_fade = 1.0
 
         if raw is None:
@@ -190,7 +297,16 @@ def _get_active_mushroom_stands(plates, t):
         tw = max(16, int(raw.shape[1] * grow_scale))
         th = max(16, int(raw.shape[0] * grow_scale))
         scaled = cv2.resize(raw, (tw, th), interpolation=cv2.INTER_LINEAR)
-        stands.append((scaled, x - tw // 2, base_y - th, grow_scale, a_fade, wave_delay))
+        # Root each sprite on the visible, topmost land contour at its x. A
+        # fixed baseline and a single foreground-ridge baseline both mis-seat
+        # plants where the layered hills slope or overlap.
+        ground_y = HORIZON - 16
+        if ground_profile is not None and 0 <= int(x) < len(ground_profile):
+            # The land mask closes at the waterline; lower contour valleys are
+            # therefore seated at the shoreline rather than below the image's
+            # visible ground plane.
+            ground_y = min(HORIZON - 1, max(0, int(ground_profile[int(x)])))
+        stands.append((scaled, x - tw // 2, ground_y - th, grow_scale, a_fade, wave_delay, ground_y))
 
     return stands
 
@@ -199,7 +315,26 @@ def life(frame, plates, t, alpha=1.0):
     if alpha < 0.02:
         return
     stands = _get_active_mushroom_stands(plates, t)
-    for spr, x, y, scale, a_fade, wave_delay in stands:
+    for stand in stands:
+        spr, x, y, scale, a_fade, wave_delay = stand[:6]
+        ground_y = stand[6] if len(stand) > 6 else HORIZON - 1
+        # A soft, compressed contact shadow visually joins the trunk/root mass
+        # to the terrain and gives the larger eastern mushroom a stable seat.
+        shadow_w = max(18, int(spr.shape[1] * 0.24))
+        shadow_h = max(4, int(spr.shape[0] * 0.018))
+        pad = 14
+        shadow = np.zeros((shadow_h * 2 + pad * 2, shadow_w * 2 + pad * 2), np.float32)
+        cv2.ellipse(shadow, (shadow.shape[1] // 2, shadow.shape[0] // 2),
+                    (shadow_w, shadow_h), 0, 0, 360, 0.34, -1, cv2.LINE_AA)
+        shadow = cv2.GaussianBlur(shadow, (0, 0), sigmaX=max(2.0, shadow_h * 0.8))
+        sx = x + spr.shape[1] // 2 - shadow.shape[1] // 2
+        sy = ground_y - shadow.shape[0] // 2
+        x0, y0 = max(0, sx), max(0, sy)
+        x1, y1 = min(WIDTH, sx + shadow.shape[1]), min(HORIZON, sy + shadow.shape[0])
+        if x1 > x0 and y1 > y0:
+            mask = shadow[y0 - sy:y1 - sy, x0 - sx:x1 - sx, None] * alpha * a_fade
+            tint = np.array([31.0, 35.0, 32.0], dtype=np.float32)
+            frame[y0:y1, x0:x1] += (tint - frame[y0:y1, x0:x1]) * mask
         over(frame, spr, x, y, alpha * a_fade)
 
 
@@ -207,19 +342,155 @@ def life_reflect(frame, plates, t, stillness=0.0):
     wave_factor = max(0.0, 1.0 - float(stillness))
     stands = _get_active_mushroom_stands(plates, t)
 
-    for spr, x, y, scale, a_fade, wave_delay in stands:
+    for stand in stands:
+        spr, x, y, scale, a_fade, wave_delay = stand[:6]
         sh, sw = spr.shape[:2]
-        ref_h = int(sh * 0.80)
+        ref_h = int(sh * 0.82)
         if ref_h < 4:
             continue
         flipped = cv2.resize(spr[::-1], (sw, ref_h), interpolation=cv2.INTER_LINEAR)
-        fade = np.linspace(0.45, 0.0, ref_h, dtype=np.float32)[:, None, None]
+        # Rich, radiant water-surface gradient reflecting the mushroom bloom on the ocean
+        fade = np.linspace(0.68, 0.0, ref_h, dtype=np.float32)[:, None, None]
         flipped_rgba = flipped.copy()
         flipped_rgba[:, :, 3:4] *= fade
+        flipped_rgba = _water_wave_refraction(
+            flipped_rgba, t, x, wave_factor, plates.get("audio_feats"), phase=x * 0.003
+        )
 
         # Ocean wave reflection wobble matching passing wave dynamics from left to right
         wobble = int(math.sin(t * 1.1 - (x - 340.0) * 0.006) * (6.0 * wave_factor))
-        over(frame, flipped_rgba, x + wobble, HORIZON - 2, a_fade * 0.65)
+        over(frame, flipped_rgba, x + wobble, HORIZON - 2, a_fade * 0.78)
+
+
+FOREST_ANCHORS = (340, 640, 980, 1260, 1540)
+# Ridge 0 is farthest inland and ridge 3 is the nearest shelf. Keep the
+# center-right trees inland and all roots above the waterline.
+FOREST_GROUND_LAYERS = (2, 2, 0, 0, 1)
+FOREST_DEPTH_VISIBILITY = (0.96, 1.0, 0.96, 0.94, 0.90)
+FOREST_REFLECTION_VISIBILITY = (0.12, 0.16, 0.035, 0.03, 0.05)
+FOREST_REFLECTION_HEIGHT = (0.38, 0.45, 0.25, 0.23, 0.26)
+FOREST_GROUND_MARGIN = 18
+FOREST_EMERGENCE_DELAY = (0.44, 0.72, 0.0, 0.10, 0.26)
+FOREST_EMERGENCE_DURATION = 0.15
+
+
+def forest_ground_y(plates, index):
+    """Return the selected ridge shelf row for this tree anchor."""
+    layers = plates.get("ridge_surface_layers")
+    if layers is None:
+        row = int(plates["ridge_surface_y"][FOREST_ANCHORS[index]])
+    else:
+        row = int(layers[FOREST_GROUND_LAYERS[index]][FOREST_ANCHORS[index]])
+    return min(row, HORIZON - FOREST_GROUND_MARGIN)
+
+
+def _ridge_visibility_mask(plates, depth, left, top, width, height):
+    """Visibility mask behind all land shelves that are closer to camera."""
+    visible = np.ones((height, width), dtype=np.float32)
+    ridges = plates.get("ridges", ())
+    if depth >= len(ridges) - 1:
+        return visible
+
+    x0, y0 = int(left), int(top)
+    dx0, dy0 = max(0, x0), max(0, y0)
+    dx1, dy1 = min(WIDTH, x0 + width), min(HEIGHT, y0 + height)
+    if dx1 <= dx0 or dy1 <= dy0:
+        return visible
+    sx0, sy0 = dx0 - x0, dy0 - y0
+    sx1, sy1 = sx0 + dx1 - dx0, sy0 + dy1 - dy0
+    blocked = np.zeros((dy1 - dy0, dx1 - dx0), dtype=np.float32)
+    for ridge in ridges[depth + 1:]:
+        np.maximum(blocked, ridge[dy0:dy1, dx0:dx1], out=blocked)
+    visible[sy0:sy1, sx0:sx1] *= 1.0 - blocked
+    return visible
+
+
+def forest_emergence_alpha(t, index):
+    """Stagger whole-tree reveals from the rear ridge toward the near hero tree."""
+    p = np.clip((float(t) - FIR_EMERGENCE_START) /
+                (FIR_EMERGENCE_END - FIR_EMERGENCE_START), 0.0, 1.0)
+    local = np.clip((p - FOREST_EMERGENCE_DELAY[index]) / FOREST_EMERGENCE_DURATION, 0.0, 1.0)
+    return float(smooth(float(local)))
+
+
+def forest(frame, plates, t, presence, decay=0.0, depth_layers=None, respect_ridges=True):
+    """Composite the selected whorl-firs with a soft celestial key and late-life fade."""
+    if presence < 0.01:
+        return
+    day, warm, night = sky_weights(t)
+    sun_body, moon_body = sun(t), moon(t)
+    growing = decay < 0.001 and FIR_EMERGENCE_START <= t < FIR_EMERGENCE_END
+    for index, (spr, x) in enumerate(zip(plates.get("forest", ()), FOREST_ANCHORS)):
+        depth = FOREST_GROUND_LAYERS[index]
+        if depth_layers is not None and depth not in depth_layers:
+            continue
+        # Reveal one complete silhouette at a time, rear-to-front, instead of
+        # exposing every tree as a transparent full-height ghost.
+        opacity = forest_emergence_alpha(t, index) if growing else presence
+        tree_presence = opacity * FOREST_DEPTH_VISIBILITY[index]
+        h, w = spr.shape[:2]
+        ground_y = forest_ground_y(plates, index)
+        # A dim, directionally offset ground shadow ties each cutout to the active lamp.
+        dx, dy, shadow_rgb = _celestial_shadow(x, t, scale=min(1.3, w / 150.0))
+        shadow_w = max(30, int(w * 0.62))
+        shadow_h = max(8, int(12 + day * 5 + night * 3))
+        shadow = np.zeros((shadow_h * 3, shadow_w * 3), np.uint8)
+        cv2.ellipse(shadow, (shadow_w, shadow_h), (shadow_w // 2, shadow_h // 2), 0, 0, 360, 92, -1)
+        shadow = cv2.GaussianBlur(shadow, (0, 0), max(2.0, shadow_h * 0.8)).astype(np.float32) / 255.0
+        sx, sy = int(x + dx - shadow_w), ground_y - shadow_h // 2 + dy
+        if respect_ridges:
+            shadow *= _ridge_visibility_mask(plates, depth, sx, sy, shadow.shape[1], shadow.shape[0])
+        y0, x0 = max(0, sy), max(0, sx)
+        y1, x1 = min(HORIZON, sy + shadow.shape[0]), min(WIDTH, sx + shadow.shape[1])
+        if y1 > y0 and x1 > x0:
+            src = shadow[y0-sy:y1-sy, x0-sx:x1-sx, None] * tree_presence * 0.34
+            tint = np.asarray(shadow_rgb, np.float32)
+            frame[y0:y1, x0:x1] += (tint - frame[y0:y1, x0:x1]) * src
+
+        sprite = spr.copy()
+        # Daylight keeps the firs natural; moonlight cools the shaded side subtly.
+        warmth = min(0.18, warm * 0.14 + (0.07 if sun_body is not None else 0.0))
+        cool = night * 0.09
+        sprite[:, :, 0] *= 1.0 + warmth - cool * 0.35
+        sprite[:, :, 1] *= 1.0 + warmth * 0.22
+        sprite[:, :, 2] *= 1.0 - warmth * 0.30 + cool
+        if decay > 0.001:
+            # Slow crown-first desaturation and dissolution, rather than a uniform pop-out.
+            rows = np.linspace(0.35, 1.0, h, dtype=np.float32)[:, None]
+            sprite[:, :, 3] *= 1.0 - decay * rows * 0.78
+            leaf = np.array([108.0, 94.0, 75.0], np.float32)
+            sprite[:, :, :3] += (leaf - sprite[:, :, :3]) * decay * 0.62
+        # Align the source concept's five-tree rhythm to the established mushroom anchors.
+        root_rows = plates.get("forest_root_rows", ())
+        root_row = root_rows[index] if index < len(root_rows) else h
+        left, top = int(x - w / 2), ground_y - root_row
+        if respect_ridges:
+            sprite[:, :, 3] *= _ridge_visibility_mask(plates, depth, left, top, w, h)
+        over(frame, sprite, left, top, tree_presence)
+
+
+def forest_reflect(frame, plates, t, presence, decay=0.0, stillness=0.0):
+    if presence < 0.01:
+        return
+    wave_factor = max(0.0, 1.0 - float(stillness))
+    day, warm, night = sky_weights(t)
+    for index, (spr, x) in enumerate(zip(plates.get("forest", ()), FOREST_ANCHORS)):
+        growing = decay < 0.001 and FIR_EMERGENCE_START <= t < FIR_EMERGENCE_END
+        tree_alpha = forest_emergence_alpha(t, index) if growing else presence
+        tree_presence = (tree_alpha * FOREST_DEPTH_VISIBILITY[index]
+                         * FOREST_REFLECTION_VISIBILITY[index])
+        h, w = spr.shape[:2]
+        ref_h = max(6, int(h * FOREST_REFLECTION_HEIGHT[index]))
+        reflected = cv2.resize(spr[::-1], (w, ref_h), interpolation=cv2.INTER_LINEAR).copy()
+        fade = np.linspace(0.36, 0.0, ref_h, dtype=np.float32)[:, None]
+        reflected[:, :, 3] *= fade * (1.0 - decay * 0.55)
+        reflected[:, :, 0] *= 1.0 + warm * 0.08
+        reflected[:, :, 2] *= 1.0 + night * 0.06
+        reflected = _water_wave_refraction(
+            reflected, t, x, wave_factor, plates.get("audio_feats"), phase=index * 0.7
+        )
+        wobble = int(math.sin(t * 1.1 - (x - 340.0) * 0.006) * 5.0 * wave_factor)
+        over(frame, reflected, x - w / 2 + wobble, HORIZON + 2, tree_presence)
 
 
 def solid(frame, t, lamp, alpha):
@@ -375,21 +646,20 @@ def beasts(frame, plates, herd, t=0.0):
         return
     forms = plates["beasts"]
     
-    # Audio-reactive synchronization with the track's rhythmic piano roll (120 BPM cadence)
+    # Audio accents affect light/shadow only; gait timing stays temporally smooth.
     audio_feats = plates.get("audio_feats")
     f_idx = min(len(audio_feats) - 1, max(0, int(t * 24.0))) if audio_feats is not None else 0
     piano_onset = float(audio_feats[f_idx, 9]) if audio_feats is not None else 0.0
     piano_energy = float(audio_feats[f_idx, 5]) if audio_feats is not None else 0.0
     
-    # Musical gait cadence locked to piano downbeats
-    t_piano = t + 0.05 * piano_onset
+    t_piano = t
 
     for d_id, x in herd:
         ground = ridge_elevation_y(x)
         # 1. Hero Sauropod (d_id == 0) - Character-driven Grass-Sauropod
         if d_id == 0:
             anim_sauropod = plates.get("anim_sauropod")
-            hero_spr = anim_sauropod.get_frame(t_piano) if anim_sauropod is not None else plates.get("pokemon_sauropod")
+            hero_spr = _dino_walk_frame(anim_sauropod, d_id, t_piano) if anim_sauropod is not None else plates.get("pokemon_sauropod")
             neck_bend = max(0.0, math.sin((t - 258.0) / 30.0 * math.pi)) if 258.0 <= t <= 288.0 else 0.0
             
             if hero_spr is not None:
@@ -403,7 +673,7 @@ def beasts(frame, plates, herd, t=0.0):
                 shadow_dx, shadow_dy, _ = _celestial_shadow(x, t, scale=1.0)
                 cv2.ellipse(frame, (int(x + shadow_dx), int(ground + shadow_dy)), (int(shad_rx * 1.25), int(shad_ry * 1.6)), -12, 0, 360, shadow_tint, -1, cv2.LINE_AA)
                 sy = ground - hh + 6
-                over(frame, hero_spr, x - hw / 2, sy, 0.98)
+                over(frame, hero_spr, x - hw / 2, sy, 0.98 * _edge_presence(x, hw))
                 
                 # Falling foliage nibbles during canopy grazing sync with piano roll
                 if 258.0 <= t <= 288.0 and neck_bend > 0.3:
@@ -423,11 +693,11 @@ def beasts(frame, plates, herd, t=0.0):
             anim_anky = plates.get("anim_ankylosaur")
             anim_raptor = plates.get("anim_raptor")
             if d_id == 1 and anim_hadro is not None:
-                sprite = anim_hadro.get_frame(t_piano)
+                sprite = _dino_walk_frame(anim_hadro, d_id, t_piano)
             elif d_id == 2 and anim_anky is not None:
-                sprite = anim_anky.get_frame(t_piano)
+                sprite = _dino_walk_frame(anim_anky, d_id, t_piano)
             elif d_id == 3 and anim_raptor is not None:
-                sprite = anim_raptor.get_frame(t_piano)
+                sprite = _dino_walk_frame(anim_raptor, d_id, t_piano)
             else:
                 sprite = forms[d_id % len(forms)]
             sw, sh = sprite.shape[1], sprite.shape[0]
@@ -437,7 +707,7 @@ def beasts(frame, plates, herd, t=0.0):
             shadow_dx, shadow_dy, shadow_tint = _celestial_shadow(x, t, scale=min(1.0, sw / 160.0))
             cv2.ellipse(frame, (int(x), int(ground)), (shad_r, 8), 0, 0, 360, shadow_tint, -1, cv2.LINE_AA)
             cv2.ellipse(frame, (int(x + shadow_dx), int(ground + shadow_dy)), (int(shad_r * 1.15), 11), -10, 0, 360, shadow_tint, -1, cv2.LINE_AA)
-            over(frame, sprite, x - sw / 2, sy, 0.96)
+            over(frame, sprite, x - sw / 2, sy, 0.96 * _edge_presence(x, sw))
 
 
 def beasts_reflect(frame, plates, herd, t=0.0, stillness=0.0):
@@ -447,7 +717,7 @@ def beasts_reflect(frame, plates, herd, t=0.0, stillness=0.0):
     audio_feats = plates.get("audio_feats")
     f_idx = min(len(audio_feats) - 1, max(0, int(t * 24.0))) if audio_feats is not None else 0
     piano_onset = float(audio_feats[f_idx, 9]) if audio_feats is not None else 0.0
-    t_piano = t + 0.05 * piano_onset
+    t_piano = t
     forms = plates["beasts"]
     
     # Stillness factor: when Tanpura swells (stillness -> 1.0), wobble attenuates to 0.0
@@ -457,16 +727,16 @@ def beasts_reflect(frame, plates, herd, t=0.0, stillness=0.0):
         ground = ridge_elevation_y(x)
         if d_id == 0:
             anim_sauropod = plates.get("anim_sauropod")
-            spr = anim_sauropod.get_frame(t_piano) if anim_sauropod is not None else plates.get("pokemon_sauropod")
+            spr = _dino_walk_frame(anim_sauropod, d_id, t_piano) if anim_sauropod is not None else plates.get("pokemon_sauropod")
         elif d_id == 1:
             anim_hadro = plates.get("anim_hadrosaur")
-            spr = anim_hadro.get_frame(t_piano) if anim_hadro is not None else forms[1 % len(forms)]
+            spr = _dino_walk_frame(anim_hadro, d_id, t_piano) if anim_hadro is not None else forms[1 % len(forms)]
         elif d_id == 2:
             anim_anky = plates.get("anim_ankylosaur")
-            spr = anim_anky.get_frame(t_piano) if anim_anky is not None else forms[2 % len(forms)]
+            spr = _dino_walk_frame(anim_anky, d_id, t_piano) if anim_anky is not None else forms[2 % len(forms)]
         elif d_id == 3:
             anim_raptor = plates.get("anim_raptor")
-            spr = anim_raptor.get_frame(t_piano) if anim_raptor is not None else forms[3 % len(forms)]
+            spr = _dino_walk_frame(anim_raptor, d_id, t_piano) if anim_raptor is not None else forms[3 % len(forms)]
         else:
             spr = forms[d_id % len(forms)]
         
@@ -498,7 +768,7 @@ def beasts_reflect(frame, plates, herd, t=0.0, stillness=0.0):
                 fade = np.linspace(top_fade, bot_fade, max_ref_h, dtype=np.float32)[:, None, None]
                 
                 ref_sprite = spr[:max_ref_h][::-1].copy()
-                ref_sprite[:, :, 3:4] *= fade * (0.80 + 0.20 * piano_onset)
+                ref_sprite[:, :, 3:4] *= fade * (0.80 + 0.20 * piano_onset) * _edge_presence(x, sw)
                 
                 # In daylight: warm amber-teal tint; At night: luminous moonlit silvery-blue radiance
                 # Guaranteeing dinosaurs' reflections are vividly visible on the ocean
@@ -513,6 +783,9 @@ def beasts_reflect(frame, plates, herd, t=0.0, stillness=0.0):
                 # Subtle water crest lines shimmering through the reflection
                 wave_shimmer = 1.0 + 0.18 * np.sin(np.arange(max_ref_h)[:, None, None] * 0.16 + t * 3.5) * wave_factor
                 ref_sprite[:, :, 3:4] = np.clip(ref_sprite[:, :, 3:4] * wave_shimmer, 0, 255)
+                ref_sprite = _water_wave_refraction(
+                    ref_sprite, t, x, wave_factor, audio_feats, phase=d_id * 0.8
+                )
                 
                 eff_over_alpha = lerp(0.60, 0.88, night_factor)
                 over(frame, ref_sprite, ref_x, ref_y, eff_over_alpha)
@@ -561,30 +834,43 @@ def shimmering_stars(frame, plates, t, night_amount, stillness=0.0):
                 over(frame, ref_star, sx - ref_sz // 2, ref_y - ref_sz // 2, ref_alpha)
 
 
+def _ship_for_near(plates, near):
+    """Scale the saucer continuously with camera depth instead of size stepping."""
+    source = plates.get("ship_src")
+    if source is None:
+        source = plates["ships"][0]
+        return source
+    near = min(1.0, max(0.0, float(near)))
+    # Preserve the landed scale at near=0.70 while letting the craft recede
+    # convincingly toward -Z instead of stopping at 62% of its original size.
+    factor = 0.18 + 1.56 * near
+    w = max(8, int(round(source.shape[1] * factor)))
+    h = max(8, int(round(source.shape[0] * factor)))
+    return cv2.resize(source, (w, h), interpolation=cv2.INTER_LINEAR)
+
+
 def craft(frame, plates, body):
     if body is None:
         return
-    x, y, near = body
-    sizes = plates["ships"]
-    idx = min(len(sizes) - 1, int(near * (len(sizes) - 1) + 0.001))
-    sprite = sizes[idx]
+    x, y, near = body[:3]
+    visibility = float(body[3]) if len(body) > 3 else 1.0
+    sprite = _ship_for_near(plates, near)
     over(
         frame,
         sprite,
         x - sprite.shape[1] / 2,
         y - sprite.shape[0] / 2,
-        min(1.0, 0.25 + near * 4.0),
+        visibility * min(1.0, 0.25 + near * 4.0) * _edge_presence(x, sprite.shape[1]),
     )
 
 
-def craft_reflect(frame, plates, body, t):
-    """Renders the luminescent saucer / starcraft reflection and light column on the ocean."""
+def craft_reflect(frame, plates, body, t, stillness=0.0):
+    """Render a faint, wave-softened saucer reflection; the broad cue is in water.paint."""
     if body is None:
         return
-    x, y, near = body
-    sizes = plates["ships"]
-    idx = min(len(sizes) - 1, int(near * (len(sizes) - 1) + 0.001))
-    sprite = sizes[idx]
+    x, y, near = body[:3]
+    visibility = float(body[3]) if len(body) > 3 else 1.0
+    sprite = _ship_for_near(plates, near)
     if sprite is None:
         return
     sw, sh = sprite.shape[1], sprite.shape[0]
@@ -592,7 +878,7 @@ def craft_reflect(frame, plates, body, t):
     # Height of ship above horizon determines reflection vertical position and scale
     alt_above_water = max(0.0, float(HORIZON - y))
     ref_y = HORIZON + 2 + int(alt_above_water * 0.35)
-    wave_wobble = math.sin(t * 3.5 + x * 0.03) * 6.0
+    wave_wobble = math.sin(t * 1.7 + x * 0.015) * 3.5
     ref_x = int(x - sw / 2 + wave_wobble)
     
     if HORIZON <= ref_y < HEIGHT - 10 and -sw < ref_x < WIDTH:
@@ -600,21 +886,13 @@ def craft_reflect(frame, plates, body, t):
         if max_h > 8:
             ref_sprite = sprite[:max_h][::-1].copy()
             # Celestial luminescent starlight tint
-            ref_sprite[:, :, 0] = np.clip(ref_sprite[:, :, 0] * 1.15 + 35, 0, 255)
-            ref_sprite[:, :, 1] = np.clip(ref_sprite[:, :, 1] * 0.95 + 20, 0, 255)
-            ref_sprite[:, :, 2] = np.clip(ref_sprite[:, :, 2] * 0.70, 0, 255)
-            alpha = min(0.75, (0.25 + 0.55 * near) * max(0.0, 1.0 - alt_above_water / 500.0))
+            ref_sprite[:, :, 0] = np.clip(ref_sprite[:, :, 0] * 0.78 + 20, 0, 255)
+            ref_sprite[:, :, 1] = np.clip(ref_sprite[:, :, 1] * 0.82 + 22, 0, 255)
+            ref_sprite[:, :, 2] = np.clip(ref_sprite[:, :, 2] * 0.90 + 30, 0, 255)
+            ref_sprite = _water_wave_refraction(
+                ref_sprite, t, x, max(0.0, 1.0 - float(stillness)), plates.get("audio_feats"), phase=1.4
+            )
+            alpha = min(0.16, (0.025 + 0.13 * near) * max(0.0, 1.0 - alt_above_water / 420.0))
+            alpha *= visibility * _edge_presence(x, sw)
             if alpha > 0.02:
                 over(frame, ref_sprite, ref_x, ref_y, alpha)
-                
-                # Ethereal vertical beam of light connecting saucer to ocean surface
-                if y < HORIZON:
-                    beam_w = max(24, int(sw * 0.45))
-                    bx0 = max(0, int(x - beam_w // 2))
-                    bx1 = min(WIDTH, int(x + beam_w // 2))
-                    by0 = HORIZON
-                    by1 = min(HEIGHT, HORIZON + 90)
-                    beam_alpha = float(alpha * 0.32)
-                    frame[by0:by1, bx0:bx1, 0] += 130.0 * beam_alpha
-                    frame[by0:by1, bx0:bx1, 1] += 145.0 * beam_alpha
-                    frame[by0:by1, bx0:bx1, 2] += 95.0 * beam_alpha

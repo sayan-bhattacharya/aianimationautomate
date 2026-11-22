@@ -10,6 +10,21 @@ TOTAL_FRAMES = int(round(DURATION * FPS))
 OUTRO_TRANSITION_START = DURATION - 10.0
 OUTRO_FADE_START = DURATION - 2.0
 
+VISIT_START = 166.0
+VISIT_LAND_START = 182.0
+VISIT_LAND_END = 185.0
+VISIT_DEPARTURE_END = 212.0
+VISIT_DEPARTURE_FADE_START = 206.0
+VISIT_LANDING_X = 1120.0
+VISIT_DEPARTURE_X = 1720.0
+VISIT_DEPARTURE_Y = 78.0
+VISIT_LANDING_SURFACE_Y = 500.0  # open inland clearing between the fir groups
+VISIT_LANDING_NEAR = 0.70
+VISIT_HULL_BOTTOM_FRACTION = 70.0 / 90.0  # opaque hull bottom in the source saucer sprite
+MUSHROOM_EXIT_END = VISIT_START + 10.0
+FIR_EMERGENCE_START = MUSHROOM_EXIT_END
+FIR_EMERGENCE_END = FIR_EMERGENCE_START + 8.0
+
 
 def clamp(p, lo=0.0, hi=1.0):
     return lo if p < lo else hi if p > hi else p
@@ -113,17 +128,46 @@ def title_lines(t):
 
 
 def visit(t):
-    """Craft enters from the western horizon, skims the sea, then climbs east."""
-    if not 166.0 <= t < 207.0:
+    """Approach, settle on land, hold three seconds, then rise rightward and recede (-Z)."""
+    if not VISIT_START <= t < VISIT_DEPARTURE_END:
         return None
-    if t < 181.0:
-        p = smooth((t - 166.0) / 15.0)
-        return lerp(-120.0, 520.0, p), lerp(250.0, HORIZON - 24.0, p), lerp(0.12, 0.82, p)
-    if t < 192.0:
-        p = smooth((t - 181.0) / 11.0)
-        return lerp(520.0, 1270.0, p), HORIZON - 24.0 + 6.0 * math.sin(math.pi * p), lerp(0.82, 1.0, p)
-    p = smooth((t - 192.0) / 15.0)
-    return lerp(1270.0, 2040.0, p), lerp(HORIZON - 24.0, 38.0, p), lerp(1.0, 0.12, p)
+    landed_height = 90.0 * (0.18 + 1.56 * VISIT_LANDING_NEAR)
+    visible_bottom_offset = landed_height * (VISIT_HULL_BOTTOM_FRACTION - 0.5)
+    landed_y = VISIT_LANDING_SURFACE_Y - visible_bottom_offset
+    if t < VISIT_LAND_START:
+        p = smooth((t - VISIT_START) / (VISIT_LAND_START - VISIT_START))
+        return (lerp(-250.0, VISIT_LANDING_X, p), lerp(285.0, landed_y, p),
+                lerp(0.12, VISIT_LANDING_NEAR, p), 1.0)
+    if t < VISIT_LAND_END:
+        return VISIT_LANDING_X, landed_y, VISIT_LANDING_NEAR, 1.0
+
+    p = smooth((t - VISIT_LAND_END) / (VISIT_DEPARTURE_END - VISIT_LAND_END))
+    # Match the reference arrow: a long diagonal ascent across the image plane.
+    # `near` is the projected depth control; approaching zero makes the craft
+    # shrink continuously as it travels away from camera along -Z.
+    visibility = 1.0 - smooth((t - VISIT_DEPARTURE_FADE_START) /
+                              (VISIT_DEPARTURE_END - VISIT_DEPARTURE_FADE_START))
+    return (lerp(VISIT_LANDING_X, VISIT_DEPARTURE_X, p),
+            lerp(landed_y, VISIT_DEPARTURE_Y, p),
+            VISIT_LANDING_NEAR * (1.0 - p), visibility)
+
+
+def arrival_cue(t):
+    """A restrained water glint advances ahead of the craft, then fades at dawn."""
+    if not 160.0 <= t < VISIT_DEPARTURE_END:
+        return None
+    if t < VISIT_LAND_START:
+        p = smooth((t - 160.0) / (VISIT_LAND_START - 160.0))
+        x = lerp(220.0, VISIT_LANDING_X, p)
+        weight = 0.16 * smooth((t - 160.0) / 4.0)
+    elif t < VISIT_LAND_END:
+        x, weight = VISIT_LANDING_X, 0.16
+    else:
+        p = smooth((t - VISIT_LAND_END) / (VISIT_DEPARTURE_END - VISIT_LAND_END))
+        x = lerp(VISIT_LANDING_X, VISIT_DEPARTURE_X, p)
+        weight = 0.16 * (1.0 - smooth((t - VISIT_DEPARTURE_FADE_START) /
+                                     (VISIT_DEPARTURE_END - VISIT_DEPARTURE_FADE_START)))
+    return x, weight
 
 
 def colony(t):
@@ -135,6 +179,34 @@ def colony(t):
     stage = min(7.0, age / 18.0)
     copies = 1 if t < 38 else 3 if t < 70 else 5
     return alpha, stage, copies
+
+
+def mushroom_cycle_alpha(t):
+    """The mushroom world yields to pines at the visitor, then returns after decay."""
+    if t < 20.0:
+        return 0.0
+    if t < VISIT_START:
+        return colony(t)[0]
+    # Mushrooms leave first; a brief, clear ridge pause separates the states
+    # before the firs emerge, avoiding a long double-exposure of both silhouettes.
+    if t < MUSHROOM_EXIT_END:
+        return colony(VISIT_START)[0] * (1.0 - smooth((t - VISIT_START) / (MUSHROOM_EXIT_END - VISIT_START)))
+    if 404.0 <= t < 420.0:
+        return smooth((t - 404.0) / 16.0)
+    if 420.0 <= t < 428.0:
+        # Carry the returning mushrooms gently into the luminous Buddha / studio
+        # transition instead of cutting their alpha at the 7-minute boundary.
+        return 1.0 - smooth((t - 420.0) / 8.0)
+    return 0.0
+
+
+def forest_cycle(t):
+    """Whorl-firs emerge with the craft and hold through the dinosaur passage."""
+    if t < FIR_EMERGENCE_START or t >= 404.0:
+        return 0.0, 0.0
+    grow = smooth((t - FIR_EMERGENCE_START) / (FIR_EMERGENCE_END - FIR_EMERGENCE_START))
+    decay = smooth((t - 391.0) / 9.0)
+    return grow * (1.0 - decay), decay
 
 
 def birds(t):
@@ -154,11 +226,12 @@ def herd(t):
       3: Feathered Raptor
     Each dinosaur maintains continuous steady stride with zero speed discrepancy or index swapping.
     """
-    if not 240.0 <= t < 396.0:
+    if not 232.0 <= t < 405.0:
         return ()
     
-    # Caravan march speed: ~17.5 pixels/sec from East (2080+) to West (-350)
-    pace = 17.5
+    # Calm, constant caravan pace. The longer exit window lets the full group
+    # clear the frame before the forest begins its gradual decay.
+    pace = 19.5
     t_rel = t - 240.0
     
     dinos = [
@@ -168,7 +241,7 @@ def herd(t):
         (3, 2860.0 - pace * t_rel),
     ]
     
-    return tuple((d_id, x) for d_id, x in dinos if -350.0 <= x <= 2150.0)
+    return tuple((d_id, x) for d_id, x in dinos if -500.0 <= x <= 2320.0)
 
 
 def scene_light(t):
@@ -221,8 +294,17 @@ def water_stillness(t):
 
 
 def buddha(t):
-    # Crisp, professional cosmic reveal transition
-    return smooth((t - 350.0) / 16.0) * (1.0 - smooth((t - 422.0) / 6.0))
+    # Keep the landscape readable through forest decay and mushroom return, then
+    # let the cosmic Buddha resolve as their final, luminous afterimage.
+    if t < 350.0:
+        return 0.0
+    if t < 366.0:
+        return 0.18 * smooth((t - 350.0) / 16.0)
+    if t < 418.0:
+        return 0.18
+    if t < 422.0:
+        return lerp(0.18, 1.0, smooth((t - 418.0) / 4.0))
+    return 1.0 - smooth((t - 422.0) / 6.0)
 
 
 def audit():

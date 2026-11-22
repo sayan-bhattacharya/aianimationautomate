@@ -2,6 +2,7 @@
 import math
 import os
 
+import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
@@ -12,6 +13,23 @@ from she_film.outro import build_outro_card
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CACHE = os.path.join(os.path.dirname(__file__), "cache")
 LOGO_PATH = os.path.join(ROOT_DIR, "assets", "logo-circle.png")
+RIDGE_PARAMS = (
+    (120, 800, 70, 700, 50, 0.0035, 0.6, 0.007),
+    (95, 650, 50, 600, 35, 0.0042, 1.2, 0.0085),
+    (75, 500, 35, 550, 22, 0.005, 2.1, 0.01),
+    (55, 400, 25, 450, 0, 0.006, 1.5, 0.012),
+)
+FOREST_DEPTH_SCALE = (0.80, 1.0, 0.62, 0.68, 0.56)
+
+
+def ridge_surface_y(x, params=None):
+    """Continuous top contour of the visible land stack at x."""
+    if params is None:
+        return min(ridge_surface_y(x, ridge_params) for ridge_params in RIDGE_PARAMS)
+    amp1, dec1, amp2, dec2, base_y, freq1, p1, freq2 = params
+    ridge = amp1 * math.exp(-x / dec1) + amp2 * math.exp(-(WIDTH - x) / dec2)
+    elevation = ridge + 22 * math.sin(x * freq1 + p1) + 12 * math.cos(x * freq2)
+    return HORIZON - base_y - int(elevation)
 
 
 def _sky(color_fn):
@@ -239,6 +257,62 @@ def _life():
 
         stages.append(np.asarray(im))
     return stages
+
+
+def _forest_sprites():
+    """Load whorl-firs with added depth separation for the two inland trees."""
+    names = ("small_left", "hero_center_left", "small_center", "hero_center_right", "small_right")
+    # The center-right pair sit farther inland: smaller scale creates a clear
+    # z-depth cue while their roots remain seated on the same land profile.
+    root = os.path.join(ROOT_DIR, "assets", "whorl_firs")
+    sprites = []
+    root_rows = []
+    for name in names:
+        path = os.path.join(root, name + ".png")
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"Required whorl-fir reference cutout is missing: {path}")
+        image = Image.open(path).convert("RGBA")
+        if name in ("hero_center_right", "small_right"):
+            image = _refine_forest_cutout(image, remove_specks=(name == "hero_center_right"))
+        scale = FOREST_DEPTH_SCALE[len(sprites)]
+        size = (round(image.width * WIDTH / 1365.0 * scale),
+                round(image.height * WIDTH / 1365.0 * scale))
+        image = image.resize(size, Image.Resampling.LANCZOS)
+        sprite = _rgba(np.asarray(image))
+        opaque_rows = np.where(sprite[:, :, 3].max(axis=1) > 0.03)[0]
+        root_rows.append(int(opaque_rows[-1] + 1) if len(opaque_rows) else sprite.shape[0])
+        sprites.append(sprite)
+    return sprites, tuple(root_rows)
+
+
+def _refine_forest_cutout(image, remove_specks=False):
+    """Clean the two far-right fir mattes while preserving fine branch edges."""
+    rgba = np.asarray(image.convert("RGBA")).copy()
+    alpha = rgba[:, :, 3]
+    if remove_specks:
+        count, labels, stats, _ = cv2.connectedComponentsWithStats(
+            (alpha > 20).astype(np.uint8), connectivity=8
+        )
+        keep = np.zeros(count, dtype=bool)
+        keep[0] = True
+        for label in range(1, count):
+            keep[label] = stats[label, cv2.CC_STAT_AREA] >= 60
+        alpha[~keep[labels]] = 0
+
+    # Decontaminate only semi-transparent edge colors from the source plate;
+    # retain the authored alpha so foliage texture and branch gaps stay intact.
+    edge = ((alpha > 0) & (alpha < 250)).astype(np.uint8) * 255
+    if np.any(edge):
+        rgba[:, :, :3] = cv2.inpaint(rgba[:, :, :3], edge, 2.0, cv2.INPAINT_TELEA)
+    rgba[:, :, 3] = cv2.GaussianBlur(alpha, (0, 0), 0.35)
+
+    ys, xs = np.where(rgba[:, :, 3] > 4)
+    if len(xs):
+        pad = 2
+        x0, x1 = max(0, int(xs.min()) - pad), min(rgba.shape[1], int(xs.max()) + pad + 1)
+        y0, y1 = max(0, int(ys.min()) - pad), min(rgba.shape[0], int(ys.max()) + pad + 1)
+        rgba = rgba[y0:y1, x0:x1]
+    return Image.fromarray(rgba, "RGBA")
 
 
 def _seat(awake):
@@ -580,11 +654,10 @@ def load():
     water_night[:, 0, 0] = 8 * (1 - frac[:, 0]) + 5 * frac[:, 0]
     water_night[:, 0, 1] = 22 * (1 - frac[:, 0]) + 14 * frac[:, 0]
     water_night[:, 0, 2] = 48 * (1 - frac[:, 0]) + 32 * frac[:, 0]
-    ridges = (
-        _ridge_mask(120, 800, 70, 700, 50, 0.0035, 0.6, 0.007),
-        _ridge_mask(95, 650, 50, 600, 35, 0.0042, 1.2, 0.0085),
-        _ridge_mask(75, 500, 35, 550, 22, 0.005, 2.1, 0.01),
-        _ridge_mask(55, 400, 25, 450, 0, 0.006, 1.5, 0.012),
+    ridges = tuple(_ridge_mask(*params) for params in RIDGE_PARAMS)
+    ridge_surface_layers = tuple(
+        np.asarray([ridge_surface_y(float(x), params) for x in range(WIDTH)], dtype=np.int32)
+        for params in RIDGE_PARAMS
     )
     land = np.clip(ridges[0] + ridges[1] + ridges[2] + ridges[3], 0, 1)
     rng = np.random.default_rng(7)
@@ -597,6 +670,7 @@ def load():
         except Exception:
             audio_feats = None
 
+    forest_sprites, forest_root_rows = _forest_sprites()
     plates = {
         "audio_feats": audio_feats,
         "day": day,
@@ -606,13 +680,18 @@ def load():
         "water_warm": water_warm,
         "water_night": water_night,
         "ridges": ridges,
+        "ridge_surface_layers": ridge_surface_layers,
+        "ridge_surface_y": np.asarray([ridge_surface_y(float(x)) for x in range(WIDTH)], dtype=np.int32),
         "land": land,
         "sun": _sun_sprite(),
         "moon": _moon_sprite(),
         "titles": _title_cards(),
         "life": _life(),
+        "forest": forest_sprites,
+        "forest_root_rows": forest_root_rows,
         "buddha": _buddha(),
         "nebula": _nebula(),
+        "ship_src": _rgba(_ship_sprite()),
         "ships": _ship_sizes(_ship_sprite()),
         "beasts": (_sauropod_sprite(), _hadrosaur_sprite(), _ankylosaur_sprite(), _raptor_sprite()),
         "seat": _seat(False),
@@ -680,11 +759,10 @@ def load():
     screens_npz = os.path.join(CACHE, "screens_90s.npz")
     if os.path.exists(screens_npz):
         try:
-            # Materialize only the two used feeds once. Indexing an NpzFile in
-            # every rendered frame would decompress the same 200+ MB archive
-            # repeatedly during the studio sequence.
+            # Materialize each feed once. Indexing an NpzFile in every
+            # rendered frame would decompress the archive repeatedly.
             with np.load(screens_npz) as screen_archive:
-                required = ("scr_left", "scr_right")
+                required = ("scr_left", "scr_mid_left", "scr_mid_right", "scr_right")
                 missing = [key for key in required if key not in screen_archive]
                 if missing:
                     raise ValueError(f"Screen cache is missing keys: {missing}")

@@ -26,11 +26,16 @@ MARKS = [
     (174.0, "05_saucer_landing"),
     (194.0, "06_night_launch"),
     (230.0, "07_vegetation_to_forest"),
+    (236.0, "07a_whorl_fir_growth_midpoint"),
+    (260.0, "07b_whorl_fir_caravan"),
     (260.0, "07a_dinosaur_reflection_260s"),
     (270.0, "08_dinosaur_grazing_marine_life"),
     (307.0, "08a_crimson_transition_307s"),
     (310.0, "09_second_moonrise"),
     (390.0, "10a_late_caravan_390s"),
+    (400.0, "10b_whorl_fir_decay"),
+    (406.0, "10c_bare_rest"),
+    (414.0, "10d_mushroom_return"),
     (380.0, "10_cosmic_demigod_vr_waveform"),
     (420.0, "11a_studio_screen_start_420s"),
     (426.0, "11_matrix_glitch_tearing"),
@@ -202,7 +207,11 @@ def stitch_movie(enable_4k=False):
     cmd = [
         "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", listing,
         "-i", AUDIO, "-t", str(DURATION),
-        "-c:v", "copy", "-c:a", "aac", "-b:a", "320k",
+        # Refined blue-blocker finish: 12% blue suppression with restrained
+        # red/green lift for amber warmth, without a contrast curve or vignette.
+        "-vf", "colorchannelmixer=rr=1.018:gg=1.006:bb=0.88",
+        "-c:v", "libx264", "-preset", "fast", "-crf", "17", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "320k",
         "-af", f"afade=t=in:ss=0:d=1.2,afade=t=out:st={DURATION-12:.3f}:d=12",
         OUTPUT,
     ]

@@ -4,7 +4,8 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from she_film import actors, water
+from she_film import actors, mirage, water
+from she_film.mirage import refract_background
 from she_film.clock import (
     HEIGHT,
     HORIZON,
@@ -14,8 +15,11 @@ from she_film.clock import (
     OUTRO_TRANSITION_START,
     WIDTH,
     birds,
+    arrival_cue,
     buddha,
     colony,
+    forest_cycle,
+    mushroom_cycle_alpha,
     crimson,
     dream,
     herd,
@@ -39,11 +43,15 @@ _CRT_MAP_CACHE = {}
 # plate. Quads are ordered top-left, top-right, bottom-right, bottom-left.
 STUDIO_SCREEN_QUADS = {
     "scr_left": ((72.0, 302.0), (314.0, 363.0), (314.0, 631.0), (72.0, 682.0)),
-    "scr_right": ((1544.0, 324.0), (1795.0, 312.0), (1795.0, 666.0), (1542.0, 680.0)),
+    "scr_mid_left": ((344.0, 374.0), (484.0, 414.0), (484.0, 641.0), (344.0, 663.0)),
+    "scr_mid_right": ((496.0, 416.0), (570.0, 442.0), (570.0, 614.0), (496.0, 637.0)),
+    "scr_right": ((1544.0, 386.0), (1786.0, 311.0), (1792.0, 666.0), (1542.0, 647.0)),
 }
 STUDIO_BEZEL_QUADS = {
     "scr_left": ((52.0, 278.0), (330.0, 350.0), (330.0, 652.0), (52.0, 712.0)),
-    "scr_right": ((1526.0, 302.0), (1812.0, 298.0), (1812.0, 696.0), (1526.0, 702.0)),
+    "scr_mid_left": ((332.0, 360.0), (494.0, 405.0), (494.0, 649.0), (332.0, 681.0)),
+    "scr_mid_right": ((488.0, 404.0), (580.0, 434.0), (580.0, 622.0), (488.0, 649.0)),
+    "scr_right": ((1526.0, 371.0), (1807.0, 291.0), (1812.0, 696.0), (1526.0, 702.0)),
 }
 
 
@@ -227,11 +235,12 @@ def _render_buddha_waveform(frame, t, buddha_alpha, plates):
 
 def _render_studio_screens(base_studio, t, plates=None):
     """
-    Renders front-facing Buddha telemetry suite in the redesigned 2-screen setup
+    Renders the four-screen Buddha telemetry suite
     using true perspective planar homography (cv2.warpPerspective) onto calibrated
     perspective trapezoids that respect Z-axis depth vanishing geometry:
-      - Screen A (Left Wall): wide cosmic Buddha B-roll loop
-      - Screen B (Right Wall): Buddha portrait and mudra detail loop
+      - Large left: Buddha meditation B-roll
+      - Two inner left screens: dinosaur and channel-surfing B-roll
+      - Right: Buddha portrait and mudra detail B-roll
     """
     studio = base_studio.copy()
     screens_data = plates.get("screens_90s") if plates is not None else None
@@ -304,10 +313,14 @@ def _render_studio_screens(base_studio, t, plates=None):
         # Keep the feed inside its active-area mask; the bezel remains visible.
         studio[y0:y1, x0:x1] = roi_bg * (1.0 - mask) + roi_warp * mask
 
-    # 1. SCREEN A (Left Wall): portrait cosmic Buddha B-roll
+    # Large left screen: Buddha meditation B-roll.
     apply_perspective_screen(STUDIO_SCREEN_QUADS["scr_left"], "scr_left", [50, 70, 80])
 
-    # 2. SCREEN B (Right Wall): Buddha portrait and mudra detail B-roll
+    # Inner monitors show the dinosaur plate and the playful channel-surfing reel.
+    apply_perspective_screen(STUDIO_SCREEN_QUADS["scr_mid_left"], "scr_mid_left", [50, 70, 80])
+    apply_perspective_screen(STUDIO_SCREEN_QUADS["scr_mid_right"], "scr_mid_right", [50, 70, 80])
+
+    # Right screen: Buddha portrait and mudra detail B-roll.
     apply_perspective_screen(STUDIO_SCREEN_QUADS["scr_right"], "scr_right", [45, 65, 30])
 
     return studio
@@ -387,14 +400,25 @@ def render(plates, t):
         white = np.array([228, 234, 240], np.float32)
         band += (white - band) * (cover * 0.8) * land
 
+    # A small, timed horizon refraction bridges vegetation states. It is
+    # deliberately applied before sprites so the mushrooms/firs retain their
+    # authored contours and readable material detail.
+    refract_background(frame, t)
+    mirage.soften_background(frame, t, plates.get("audio_feats"))
+
     alpha, stage, copies = colony(t)
-    if alpha > 0.02:
-        actors.life(frame, plates, t, alpha)
+    mushroom_alpha = mushroom_cycle_alpha(t)
+    forest_alpha, forest_decay = forest_cycle(t)
+    if mushroom_alpha > 0.02:
+        actors.life(frame, plates, t, mushroom_alpha)
+    if forest_alpha > 0.02:
+        # Inland stands live behind the caravan and the nearer ridge shelves.
+        actors.forest(frame, plates, t, forest_alpha, forest_decay, depth_layers=(0, 1))
     actors.beasts(frame, plates, herd(t), t)
     arrived = visit(t)
-    if arrived is not None:
-        actors.craft(frame, plates, arrived)
-    # The nearest ridge covers only the roots, so the stand sits in the hill.
+
+    # Composite the nearest shore in front of distant actors. The tree masks
+    # additionally account for every nearer ridge, rather than one hard cutoff.
     y1 = HORIZON - 70
     front = plates["ridges"][-1][y1:HORIZON, :, None]
     frame[y1:HORIZON] += (ridge_colors[-1] - frame[y1:HORIZON]) * front
@@ -402,6 +426,17 @@ def render(plates, t):
         land = plates["land"][y1:HORIZON, :, None]
         white = np.array([228, 234, 240], np.float32)
         frame[y1:HORIZON] += (white - frame[y1:HORIZON]) * (cover * 0.8) * land
+
+    # A landed/near craft sits in front of the inland tree cutouts. As its
+    # projected depth recedes, restore the foreground trees over it so the
+    # takeoff travels naturally behind the nearer landscape.
+    craft_is_near = arrived is not None and arrived[2] >= 0.42
+    if forest_alpha > 0.02 and craft_is_near:
+        actors.forest(frame, plates, t, forest_alpha, forest_decay, depth_layers=(2, 3))
+    if arrived is not None:
+        actors.craft(frame, plates, arrived)
+    if forest_alpha > 0.02 and not craft_is_near:
+        actors.forest(frame, plates, t, forest_alpha, forest_decay, depth_layers=(2, 3))
 
     base = (
         plates["water_warm"] * warm
@@ -413,23 +448,30 @@ def render(plates, t):
         lamps.append((sun_body[0], smooth((sun_body[1] + 16.0) / 30.0), (252, 186, 80), 64, 420))
     elif moon_body is not None:
         rgb = (210, 72, 64) if red > 0.35 else (198, 210, 224)
-        lamps.append((moon_body[0], 0.72 * smooth((moon_body[1] + 10.0) / 24.0), rgb, 26, 170))
+        lamps.append((moon_body[0], 0.42 * smooth((moon_body[1] + 10.0) / 24.0), rgb, 16, 110))
+    cue = arrival_cue(t)
+    if cue is not None:
+        cue_x, cue_weight = cue
+        lamps.append((cue_x, cue_weight, (178, 207, 230), 18, 110, 0.012))
     if arrived is not None:
-        cx, cy, near = arrived
+        cx, cy, near = arrived[:3]
+        visibility = float(arrived[3]) if len(arrived) > 3 else 1.0
         # Flying saucer celestial glitter column across the ocean waves (matching the moon style)
         saucer_alt = max(0.0, float(HORIZON - cy))
-        saucer_wt = min(0.92, (0.30 + 0.62 * near) * max(0.0, 1.0 - saucer_alt / 550.0))
+        saucer_wt = min(0.11, (0.025 + 0.10 * near) * max(0.0, 1.0 - saucer_alt / 480.0)) * visibility
         if saucer_wt > 0.04:
-            # Fifth value keeps the column broad; sixth enables craft-only ring wakes.
-            lamps.append((cx, saucer_wt, (190, 230, 255), 42, 220,
-                          0.72 * near * max(0.0, 1.0 - saucer_alt / 420.0)))
+            # A restrained crystal streak follows the craft without a hard beam.
+            lamps.append((cx, saucer_wt, (188, 211, 232), 16, 104,
+                          0.018 * near * max(0.0, 1.0 - saucer_alt / 420.0)))
     still = max(cover, water_stillness(t))
     frame[HORIZON:] = water.paint(base, t, lamps, stillness=still, audio_feats=plates.get("audio_feats"))
-    if alpha > 0.02:
+    if mushroom_alpha > 0.02:
         actors.life_reflect(frame, plates, t, stillness=still)
+    if forest_alpha > 0.02:
+        actors.forest_reflect(frame, plates, t, forest_alpha, forest_decay, stillness=still)
     actors.beasts_reflect(frame, plates, herd(t), t, stillness=still)
     if arrived is not None:
-        actors.craft_reflect(frame, plates, arrived, t)
+        actors.craft_reflect(frame, plates, arrived, t, stillness=still)
 
     # The cosmic demigod Buddha reveal (Maya & Lila / The Projection Mechanism)
     if buddha_alpha > 0.01:
