@@ -477,15 +477,31 @@ def forest(frame, plates, t, presence, decay=0.0, depth_layers=None, respect_rid
                 r_soil = int(y_soil - top)
                 if 0 <= r_soil < h:
                     depth_in_sand = np.arange(h - r_soil, dtype=np.float32)
-                    sprite[r_soil:, c, 3] *= np.clip(1.0 - depth_in_sand / 5.0, 0.0, 1.0)
+                    sprite[r_soil:, c, 3] *= np.clip(1.0 - depth_in_sand / 6.0, 0.0, 1.0)
                 elif r_soil < 0:
                     sprite[:, c, 3] = 0.0
 
         if respect_ridges:
             sprite[:, :, 3] *= _ridge_visibility_mask(plates, depth, left, top, w, h)
 
-        # Soft sand contact shadow under the roots along the terrain surface
-        cv2.ellipse(frame, (int(x), int(ground_y + 1)), (int(w * 0.28), 6), 0, 0, 360, (18, 16, 12), -1, cv2.LINE_AA)
+        # Natural ambient occlusion (AO) contact shadow where roots touch the beach sand
+        ao_w = max(16, int(w * 0.30))
+        ao_h = max(3, int(ao_w * 0.16))
+        ao_mask = np.zeros((ao_h * 2 + 1, ao_w * 2 + 1), dtype=np.float32)
+        cv2.ellipse(ao_mask, (ao_w, ao_h), (ao_w, ao_h), 0, 0, 360, 1.0, -1)
+        ao_mask = cv2.GaussianBlur(ao_mask, (0, 0), max(1.5, ao_h * 0.7))
+        sy0 = max(0, ground_y - ao_h)
+        sy1 = min(HORIZON, ground_y + ao_h + 1)
+        sx0 = max(0, int(x) - ao_w)
+        sx1 = min(WIDTH, int(x) + ao_w + 1)
+        if sy1 > sy0 and sx1 > sx0:
+            patch = ao_mask[sy0 - (ground_y - ao_h):sy1 - (ground_y - ao_h),
+                            sx0 - (int(x) - ao_w):sx1 - (int(x) - ao_w)]
+            ao_factor = 1.0 - patch * (0.32 * tree_presence)
+            frame[sy0:sy1, sx0:sx1] = np.clip(
+                frame[sy0:sy1, sx0:sx1].astype(np.float32) * ao_factor[:, :, None],
+                0, 255
+            ).astype(np.uint8)
 
         over(frame, sprite, left, top, tree_presence)
 
