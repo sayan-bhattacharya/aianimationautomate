@@ -1,0 +1,45 @@
+{
+  "source_file": "e:\\betweenthenotes\\drone_animation_project\\She.wav",
+  "fps": 24.0,
+  "total_frames": 10778,
+  "duration_sec": 449.064,
+  "first_pluck_near_1m25s": 79.875,
+  "all_plucks_m1": [
+    79.875,
+    81.45833333333333,
+    82.08333333333333,
+    86.95833333333333,
+    89.91666666666667,
+    91.125,
+    91.79166666666667
+  ],
+  "tambura_entrance_target_sec": 260.0,
+  "tambura_entrance_detected_sec": 259.5,
+  "tambura_window_plucks": [
+    252.833,
+    253.583,
+    255.667,
+    256.833,
+    257.583,
+    258.25,
+    259.5,
+    261.583,
+    262.25,
+    262.708,
+    266.25,
+    266.708,
+    269.583
+  ],
+  "columns": [
+    "rms_norm",
+    "centroid_norm",
+    "sub_bass_norm",
+    "bass_norm",
+    "low_mid_norm",
+    "mid_norm",
+    "high_mid_norm",
+    "high_norm",
+    "air_norm",
+    "onset_env_norm"
+  ]
+}
