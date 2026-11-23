@@ -828,14 +828,78 @@ def beasts_reflect(frame, plates, herd, t=0.0, stillness=0.0):
                 over(frame, ref_sprite, ref_x, ref_y, eff_over_alpha)
 
 
+_VAN_GOGH_HALO_SPRITE = None
+
+
+def _get_van_gogh_halo_sprite():
+    global _VAN_GOGH_HALO_SPRITE
+    if _VAN_GOGH_HALO_SPRITE is None:
+        dim = 96
+        center = (dim - 1) / 2.0
+        ys, xs = np.ogrid[:dim, :dim]
+        dist = np.hypot(xs - center, ys - center) / (dim * 0.48)
+        
+        # Outer ethereal cyan aura
+        outer = np.exp(-0.5 * (dist / 0.52) ** 2) * 0.42
+        # Mid golden impasto ring (Van Gogh Starry Night halo)
+        ring_dist = np.abs(dist - 0.48)
+        ring = np.exp(-0.5 * (ring_dist / 0.13) ** 2) * 0.62
+        
+        alpha = np.clip(outer + ring, 0.0, 1.0)
+        gold = np.array([125.0, 205.0, 255.0], dtype=np.float32)  # BGR
+        cyan = np.array([245.0, 215.0, 160.0], dtype=np.float32)  # BGR
+        
+        bgr = (cyan * outer[:, :, None] + gold * ring[:, :, None]) / np.maximum(1e-4, outer[:, :, None] + ring[:, :, None])
+        
+        sprite = np.zeros((dim, dim, 4), dtype=np.float32)
+        sprite[:, :, :3] = bgr
+        sprite[:, :, 3] = alpha
+        _VAN_GOGH_HALO_SPRITE = sprite
+    return _VAN_GOGH_HALO_SPRITE
+
+
+def _van_gogh_celestial_currents(frame, t, alpha):
+    """Render subtle swirling starlight currents across the upper sky inspired by Van Gogh's Starry Night."""
+    if alpha < 0.06:
+        return
+    t_slow = t * 0.12
+    strip_w, strip_h = 384, 160
+    strip = np.zeros((strip_h, strip_w, 3), dtype=np.float32)
+    
+    x_coords = np.arange(strip_w, dtype=np.float32)
+    # Primary swirling stream across the sky
+    y_wave1 = 65.0 + 26.0 * np.sin(x_coords * 0.018 + t_slow) + 14.0 * np.cos(x_coords * 0.035 - t_slow * 0.8)
+    # Secondary counter-stream
+    y_wave2 = 105.0 + 22.0 * np.sin(x_coords * 0.022 - t_slow * 1.1) + 16.0 * np.sin(x_coords * 0.01 + t_slow * 0.5)
+    
+    pts1 = np.column_stack([x_coords, np.clip(y_wave1, 0, strip_h - 1)]).astype(np.int32)
+    cv2.polylines(strip, [pts1], False, (220, 195, 140), 4, cv2.LINE_AA)
+    
+    pts2 = np.column_stack([x_coords, np.clip(y_wave2, 0, strip_h - 1)]).astype(np.int32)
+    cv2.polylines(strip, [pts2], False, (245, 215, 165), 3, cv2.LINE_AA)
+    
+    strip = cv2.GaussianBlur(strip, (0, 0), 5.5)
+    
+    full_currents = cv2.resize(strip, (WIDTH, strip_h * 2), interpolation=cv2.INTER_LINEAR)
+    y0, y1 = 20, min(HORIZON - 30, 20 + full_currents.shape[0])
+    ch = y1 - y0
+    
+    current_alpha = min(0.22, 0.15 * alpha)
+    frame[y0:y1, :] += full_currents[:ch, :] * current_alpha
+
+
 def shimmering_stars(frame, plates, t, night_amount, stillness=0.0):
-    """Renders shimmering celestial stars with optical diffraction spikes at night and mirror reflections."""
+    """Renders shimmering celestial stars with Van Gogh 'Starry Night' luminous breathing halos,
+    ethereal cosmic currents, and ocean mirror reflections."""
     if night_amount < 0.04:
         return
     star_spr = plates.get("star_sprite")
     if star_spr is None:
         return
     
+    # 1. Van Gogh celestial currents in upper sky
+    _van_gogh_celestial_currents(frame, t, night_amount)
+
     # Constellation coordinates across the night sky (x, y, base_size, frequency, phase)
     constellations = [
         (220, 75, 26, 1.8, 0.2),
@@ -851,6 +915,7 @@ def shimmering_stars(frame, plates, t, night_amount, stillness=0.0):
         (1580, 210, 22, 2.6, 0.8),
     ]
     
+    halo_spr = _get_van_gogh_halo_sprite()
     for sx, sy, base_sz, freq, phase in constellations:
         # Scintillation twinkle pulse
         shimmer = 0.5 + 0.5 * math.sin(t * freq + phase)
@@ -858,10 +923,18 @@ def shimmering_stars(frame, plates, t, night_amount, stillness=0.0):
         sz = max(10, int(base_sz * (0.85 + 0.30 * shimmer)))
         alpha = night_amount * min(0.96, 0.45 + 0.50 * shimmer * shimmer_slow)
         
+        # 2. Van Gogh luminous concentric halos around celestial stars
+        halo_sz = max(18, int(sz * 2.2))
+        halo_pulse = 0.5 + 0.5 * math.sin(t * (freq * 0.8) + phase)
+        halo_alpha = alpha * 0.55 * (0.70 + 0.30 * halo_pulse)
+        scaled_halo = cv2.resize(halo_spr, (halo_sz, halo_sz), interpolation=cv2.INTER_LINEAR)
+        over(frame, scaled_halo, sx - halo_sz // 2, sy - halo_sz // 2, halo_alpha)
+
+        # 3. Core radiant star sprite
         scaled_star = cv2.resize(star_spr, (sz, sz), interpolation=cv2.INTER_AREA)
         over(frame, scaled_star, sx - sz // 2, sy - sz // 2, alpha)
 
-        # Still mirror reflection on the ocean when Tanpura brings mind/water to complete stillness
+        # 4. Still mirror reflection on the ocean when Tanpura brings mind/water to complete stillness
         if stillness > 0.05:
             ref_y = HORIZON + int((HORIZON - sy) * 0.75)
             if ref_y < HEIGHT - 20:
@@ -869,6 +942,10 @@ def shimmering_stars(frame, plates, t, night_amount, stillness=0.0):
                 ref_alpha = alpha * 0.45 * float(stillness)
                 ref_star = cv2.resize(scaled_star, (ref_sz, ref_sz), interpolation=cv2.INTER_AREA)
                 over(frame, ref_star, sx - ref_sz // 2, ref_y - ref_sz // 2, ref_alpha)
+                # Halo reflection on calm water
+                ref_halo_sz = max(12, int(halo_sz * 0.75))
+                ref_halo = cv2.resize(scaled_halo, (ref_halo_sz, ref_halo_sz), interpolation=cv2.INTER_LINEAR)
+                over(frame, ref_halo, sx - ref_halo_sz // 2, ref_y - ref_halo_sz // 2, halo_alpha * 0.40 * float(stillness))
 
 
 def _ship_for_near(plates, near):

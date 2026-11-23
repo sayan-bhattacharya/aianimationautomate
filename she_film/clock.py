@@ -113,6 +113,37 @@ def sky_weights(t):
     return 0.0, 0.12, 0.88
 
 
+def star_visibility(t):
+    """Calculates star emergence: ensures the night sky appears FIRST cleanly at sunset,
+    followed by gradual organic kindling and shimmering of the celestial star field."""
+    # Act 1 Sunset -> Act 2 Night (116s -> 190s)
+    # Sunset starts 116s. Twilight settles into deep night by 126s.
+    # At 123s (2m03s), stars must NOT appear prematurely (night sky appears first).
+    if t < 126.0:
+        return 0.0
+    if 126.0 <= t < 136.0:
+        # Smooth emergence from 0.0 to 1.0 between 126s and 136s
+        return float(smooth((t - 126.0) / 10.0))
+    if 136.0 <= t < 188.0:
+        # Full night sky brilliance
+        return 1.0
+    if 188.0 <= t < 200.0:
+        # Sunrise 2 crossfade: stars fade as dawn breaks
+        return float(smooth((200.0 - t) / 12.0))
+
+    # Act 4 Sunset 2 -> Night (294s -> 380s)
+    if 294.0 <= t < 306.0:
+        return 0.0
+    if 306.0 <= t < 314.0:
+        return float(smooth((t - 306.0) / 8.0))
+    if 314.0 <= t < 380.0:
+        return 1.0
+    if 380.0 <= t < 400.0:
+        return float(smooth((400.0 - t) / 20.0))
+
+    return 0.0
+
+
 def _cut(t, start, hold, end):
     if t < start or t >= end:
         return 0.0

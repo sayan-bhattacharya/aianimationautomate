@@ -30,6 +30,7 @@ from she_film.clock import (
     smooth,
     snow_amount,
     sun,
+    star_visibility,
     title_lines,
     visit,
     waking,
@@ -346,8 +347,10 @@ def render(plates, t):
         frame[:HORIZON, :, 0] += 36.0 * red
         frame[:HORIZON, :, 1] *= 1.0 - 0.22 * red
         frame[:HORIZON, :, 2] *= 1.0 - 0.35 * red
-    actors.stars(frame, plates, t, night * (1.0 - 0.25 * red), moon_body)
-    actors.shimmering_stars(frame, plates, t, night * (1.0 - 0.25 * red), stillness=water_stillness(t))
+    star_amount = star_visibility(t) * (1.0 - 0.25 * red)
+    if star_amount > 0.005:
+        actors.stars(frame, plates, t, star_amount, moon_body)
+        actors.shimmering_stars(frame, plates, t, star_amount, stillness=water_stillness(t))
 
     if moon_body is not None:
         sprite = plates["moon_red"] if red > 0.4 else plates["moon"]
