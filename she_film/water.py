@@ -23,13 +23,18 @@ def paint(base_row, t, lamps, stillness=0.0, audio_feats=None):
         frame_idx = min(len(audio_feats) - 1, max(0, int(t * 24)))
         note_energy = float(audio_feats[frame_idx, 9] * 0.70 + audio_feats[frame_idx, 5] * 0.30)
     
+    # Easing wave velocity: higher initial wave velocity that smoothly calms and stills as Tanpura drone swells
+    speed_factor = max(0.12, 1.0 - 0.88 * float(stillness))
+    t_wave = t * (2.9 * speed_factor + 0.3)
+    t_wave_fast = t * (3.5 * speed_factor + 0.4)
+
     for lamp in lamps:
         origin_x, weight, rgb, width0, width1 = lamp[:5]
         ripple_strength = float(lamp[5]) if len(lamp) > 5 else 0.0
         if weight < 0.03 or origin_x is None:
             continue
         wobble = wave_factor * (
-            14.0 * np.sin(QY * 0.24 + t * 2.2) + 6.5 * np.sin(QY * 0.48 - t * 2.6)
+            16.0 * np.sin(QY * 0.24 + t_wave) + 7.5 * np.sin(QY * 0.48 - t_wave_fast)
         )
         path_x = (origin_x / STEP) + (QW * 0.5 - origin_x / STEP) * QF * 0.08 + wobble / STEP
         half = (width0 + width1 * QF) / STEP
@@ -39,9 +44,9 @@ def paint(base_row, t, lamps, stillness=0.0, audio_feats=None):
         reflection_mix = mask[:, :, None] * 0.36
         wq = wq * (1.0 - reflection_mix) + tint * reflection_mix
         
-        # Crest highlights with slightly increased wave velocity
+        # Crest highlights with dynamic wave velocity
         if wave_factor > 0.01:
-            crest = np.clip(np.sin(QY * 0.58 + np.sin(QX * 0.06 + t * 1.1) + t * 0.8) - 0.70, 0, 1) * wave_factor
+            crest = np.clip(np.sin(QY * 0.58 + np.sin(QX * 0.06 + t_wave * 0.5) + t_wave * 0.4) - 0.70, 0, 1) * wave_factor
             near = np.exp(-0.5 * ((QX - origin_x / STEP) / (half * 0.9 + 1)) ** 2)
             wq += (crest * near * weight)[:, :, None] * tint * 0.16
 

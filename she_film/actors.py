@@ -111,19 +111,23 @@ def over(frame, sprite, x, y, alpha=1.0):
     dst += (crop[:, :, :3] - dst) * a
 
 
-def _water_wave_refraction(reflection, t, anchor_x, wave_factor, audio_feats, phase=0.0):
-    """Break a mirrored actor silhouette along moving, music-responsive wavelets following wave crests and troughs."""
+def _water_wave_refraction(reflection, t, anchor_x, wave_factor, audio_feats, phase=0.0, parallax=1.0):
+    """Break a mirrored actor silhouette along moving, music-responsive wavelets following wave crests and troughs with depth parallax."""
     if reflection is None or wave_factor < 0.01:
         return reflection
     h, w = reflection.shape[:2]
     energy = mirage.music_energy(audio_feats, t)
     yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
     depth = np.clip(yy / max(1.0, h - 1.0), 0.0, 1.0)
-    # Accelerated wave frequency & realistic crest/trough displacement
-    phase_x = yy * 0.16 + xx * 0.024 + float(t) * 2.8 + anchor_x * 0.007 + phase
-    phase_y = xx * 0.032 - float(t) * 2.2 + yy * 0.08 + phase
-    dx = wave_factor * (4.2 + 3.8 * energy) * (0.35 + 0.65 * depth) * np.sin(phase_x)
-    dy = wave_factor * (3.0 + 2.4 * energy) * (0.25 + 0.75 * depth) * np.cos(phase_y)
+    # Dynamic wave velocity: higher initially, slowing smoothly to stillness as Tanpura drone swells
+    speed_factor = max(0.12, wave_factor)
+    t_wave_x = float(t) * (3.1 * speed_factor + 0.3)
+    t_wave_y = float(t) * (2.4 * speed_factor + 0.3)
+    phase_x = yy * 0.16 + xx * 0.024 + t_wave_x + anchor_x * 0.007 + phase
+    phase_y = xx * 0.032 - t_wave_y + yy * 0.08 + phase
+    # Parallax displacement: closer objects displace more vigorously than distant ones
+    dx = wave_factor * parallax * (4.8 + 4.2 * energy) * (0.35 + 0.65 * depth) * np.sin(phase_x)
+    dy = wave_factor * parallax * (3.4 + 2.8 * energy) * (0.25 + 0.75 * depth) * np.cos(phase_y)
     map_x = np.clip(xx - dx, 0, w - 1).astype(np.float32)
     map_y = np.clip(yy + dy, 0, h - 1).astype(np.float32)
     out = cv2.remap(reflection, map_x, map_y, cv2.INTER_LINEAR,
@@ -297,24 +301,63 @@ def _get_active_mushroom_stands(plates, t):
         if raw is None:
             continue
 
+        # Firm stalk grounding: shift the frame content down so the stalk base touches the bottom edge
+        a_raw = raw[..., 3]
+        rows = np.where(a_raw.max(axis=1) > 0.15)[0]
+        if len(rows):
+            stalk_bot = rows[-1]
+            shift_down = (raw.shape[0] - 1) - stalk_bot
+            if shift_down > 0:
+                M = np.float32([[1, 0, 0], [0, 1, shift_down]])
+                raw = cv2.warpAffine(raw, M, (raw.shape[1], raw.shape[0]),
+                                     borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0, 0))
+
         tw = max(16, int(raw.shape[1] * grow_scale))
         th = max(16, int(raw.shape[0] * grow_scale))
         scaled = cv2.resize(raw, (tw, th), interpolation=cv2.INTER_LINEAR)
-        if stand_index == 1:
+
+        # Portrait blur & depth of field on closer foreground stands
+        if stand_index == 0:
+            # Nearest foreground stand has larger angular diameter: subtle portrait optical softness
+            scaled[:, :, :3] = cv2.GaussianBlur(scaled[:, :, :3], (5, 5), 1.25)
+        elif stand_index == 1:
             # Depth-of-field blur and subtle atmospheric dithering for organic Z-depth
             blurred_bgr = cv2.GaussianBlur(scaled[:, :, :3], (7, 7), 1.5)
             noise = np.random.default_rng(42 + int(x)).normal(0, 3.0, (scaled.shape[0], scaled.shape[1], 3)).astype(np.float32)
             scaled[:, :, :3] = np.clip(blurred_bgr + noise, 0, 255)
-        # Root each sprite on the visible, topmost land contour at its x. A
-        # fixed baseline and a single foreground-ridge baseline both mis-seat
-        # plants where the layered hills slope or overlap.
+
+        # Root each sprite on the visible, topmost land contour at its x.
         ground_y = HORIZON - 16
         if ground_profile is not None and 0 <= int(x) < len(ground_profile):
-            # The land mask closes at the waterline; lower contour valleys are
-            # therefore seated at the shoreline rather than below the image's
-            # visible ground plane.
             ground_y = min(HORIZON - 1, max(0, int(ground_profile[int(x)])))
-        stands.append((scaled, x - tw // 2, ground_y - th, grow_scale, a_fade, wave_delay, ground_y))
+
+        top = ground_y - th
+
+        # Seamless Root Integration into Beach Soil:
+        # Mask each column of the root base to conform to local ridge dune contour
+        if ground_profile is not None:
+            left_col = int(x - tw // 2)
+            for c in range(tw):
+                xw = np.clip(left_col + c, 0, WIDTH - 1)
+                y_soil = ground_profile[xw]
+                r_soil = int(y_soil - top)
+                if 0 <= r_soil < th:
+                    depth_in_sand = np.arange(th - r_soil, dtype=np.float32)
+                    scaled[r_soil:, c, 3] *= np.clip(1.0 - depth_in_sand / 5.0, 0.0, 1.0)
+                elif r_soil < 0:
+                    scaled[:, c, 3] = 0.0
+
+        if t >= 400.0:
+            # Bioluminescent celestial blue glow on returning mushrooms
+            return_progress = min(1.0, max(0.0, (t - 400.0) / 12.0))
+            cap_rows = int(th * 0.65)
+            pulse = 0.70 + 0.30 * math.sin(t * 3.2 + wave_delay * 2.0)
+            cap_mask = scaled[:cap_rows, :, 3] * np.linspace(1.0, 0.0, cap_rows, dtype=np.float32)[:, None]
+            blue_lum = np.array([235.0, 175.0, 45.0], dtype=np.float32)  # cyan-blue radiance in BGR
+            scaled[:cap_rows, :, :3] += blue_lum * (cap_mask[:, :, None] * 0.45 * pulse * return_progress)
+            scaled[:, :, :3] = np.clip(scaled[:, :, :3], 0, 255)
+
+        stands.append((scaled, x - tw // 2, top, grow_scale, a_fade, wave_delay, ground_y))
 
     return stands
 
@@ -323,34 +366,51 @@ def life(frame, plates, t, alpha=1.0):
     if alpha < 0.02:
         return
     stands = _get_active_mushroom_stands(plates, t)
-    for stand in stands:
+    for stand_index, stand in enumerate(stands):
         spr, x, y, scale, a_fade, wave_delay = stand[:6]
         ground_y = stand[6] if len(stand) > 6 else HORIZON - 1
-        # A soft, compressed contact shadow visually joins the trunk/root mass
-        # to the terrain and gives the larger eastern mushroom a stable seat.
-        shadow_w = max(18, int(spr.shape[1] * 0.24))
-        shadow_h = max(4, int(spr.shape[0] * 0.018))
-        pad = 14
-        shadow = np.zeros((shadow_h * 2 + pad * 2, shadow_w * 2 + pad * 2), np.float32)
-        cv2.ellipse(shadow, (shadow.shape[1] // 2, shadow.shape[0] // 2),
-                    (shadow_w, shadow_h), 0, 0, 360, 0.34, -1, cv2.LINE_AA)
-        shadow = cv2.GaussianBlur(shadow, (0, 0), sigmaX=max(2.0, shadow_h * 0.8))
-        sx = x + spr.shape[1] // 2 - shadow.shape[1] // 2
-        sy = ground_y - shadow.shape[0] // 2
-        x0, y0 = max(0, sx), max(0, sy)
-        x1, y1 = min(WIDTH, sx + shadow.shape[1]), min(HORIZON, sy + shadow.shape[0])
-        if x1 > x0 and y1 > y0:
-            mask = shadow[y0 - sy:y1 - sy, x0 - sx:x1 - sx, None] * alpha * a_fade
-            tint = np.array([31.0, 35.0, 32.0], dtype=np.float32)
-            frame[y0:y1, x0:x1] += (tint - frame[y0:y1, x0:x1]) * mask
+        
+        # Grounding Ambient Occlusion (AO) contact shadow directly joining stalk to sand
+        ao_w = max(20, int(spr.shape[1] * 0.32))
+        ao_h = max(4, int(ao_w * 0.20))
+        ao_mask = np.zeros((ao_h * 2 + 1, ao_w * 2 + 1), dtype=np.float32)
+        cv2.ellipse(ao_mask, (ao_w, ao_h), (ao_w, ao_h), 0, 0, 360, 1.0, -1)
+        ao_mask = cv2.GaussianBlur(ao_mask, (0, 0), max(1.5, ao_h * 0.7))
+        sy0 = max(0, ground_y - ao_h)
+        sy1 = min(HORIZON, ground_y + ao_h + 1)
+        sx0 = max(0, int(x + spr.shape[1] // 2) - ao_w)
+        sx1 = min(WIDTH, int(x + spr.shape[1] // 2) + ao_w + 1)
+        if sy1 > sy0 and sx1 > sx0:
+            patch = ao_mask[sy0 - (ground_y - ao_h):sy1 - (ground_y - ao_h),
+                            sx0 - (int(x + spr.shape[1] // 2) - ao_w):sx1 - (int(x + spr.shape[1] // 2) - ao_w)]
+            ao_factor = 1.0 - patch * (0.42 * alpha * a_fade)
+            frame[sy0:sy1, sx0:sx1] = np.clip(
+                frame[sy0:sy1, sx0:sx1].astype(np.float32) * ao_factor[:, :, None],
+                0, 255
+            ).astype(np.uint8)
+
+        # Draw firmly grounded mushroom sprite
         over(frame, spr, x, y, alpha * a_fade)
+
+        # Ascending bioluminescent blue spores on returning mushrooms (t >= 400s)
+        if t >= 400.0:
+            return_progress = min(1.0, max(0.0, (t - 400.0) / 12.0))
+            for sp_idx in range(5):
+                sp_phase = sp_idx * 1.3 + stand_index * 0.8
+                sp_y = ground_y - int(spr.shape[0] * 0.65) - int(((t * 24.0 + sp_phase * 35.0) % 95.0))
+                sp_x = int(x + spr.shape[1] // 2 + math.sin(t * 1.8 + sp_phase) * (spr.shape[1] * 0.30))
+                sp_sz = 2 + (sp_idx % 2)
+                sp_a = alpha * a_fade * return_progress * (0.45 + 0.40 * math.sin(t * 4.0 + sp_phase))
+                if 0 <= sp_x < WIDTH and 0 <= sp_y < HORIZON and sp_a > 0.05:
+                    cv2.circle(frame, (sp_x, sp_y), sp_sz + 1, (240, 180, 50), -1, cv2.LINE_AA)
+                    cv2.circle(frame, (sp_x, sp_y), sp_sz, (255, 240, 190), -1, cv2.LINE_AA)
 
 
 def life_reflect(frame, plates, t, stillness=0.0):
     wave_factor = max(0.0, 1.0 - float(stillness))
     stands = _get_active_mushroom_stands(plates, t)
 
-    for stand in stands:
+    for stand_index, stand in enumerate(stands):
         spr, x, y, scale, a_fade, wave_delay = stand[:6]
         sh, sw = spr.shape[:2]
         ref_h = int(sh * 0.82)
@@ -361,12 +421,23 @@ def life_reflect(frame, plates, t, stillness=0.0):
         fade = np.linspace(0.68, 0.0, ref_h, dtype=np.float32)[:, None, None]
         flipped_rgba = flipped.copy()
         flipped_rgba[:, :, 3:4] *= fade
+        
+        # Depth parallax: closer stands refract more on the waves
+        parallax = 1.40 if stand_index in (0, 1) else (1.0 if stand_index == 2 else 0.75)
         flipped_rgba = _water_wave_refraction(
-            flipped_rgba, t, x, wave_factor, plates.get("audio_feats"), phase=x * 0.003
+            flipped_rgba, t, x, wave_factor, plates.get("audio_feats"), phase=x * 0.003, parallax=parallax
         )
 
-        # Ocean wave reflection wobble matching passing wave dynamics from left to right
-        wobble = int(math.sin(t * 1.1 - (x - 340.0) * 0.006) * (6.0 * wave_factor))
+        # Ocean wave reflection wobble matching passing wave dynamics with Tanpura stillness easing
+        speed_factor = max(0.12, wave_factor)
+        wobble = int(math.sin(t * (1.8 * speed_factor + 0.2) - (x - 340.0) * 0.006) * (6.5 * wave_factor * parallax))
+        
+        # Bioluminescent blue reflection for returning mushrooms
+        if t >= 400.0:
+            blue_ref_tint = np.array([230.0, 170.0, 50.0, 0.0], dtype=np.float32)
+            flipped_rgba[:, :, :3] += blue_ref_tint[:3] * (flipped_rgba[:, :, 3:4] * 0.30)
+            flipped_rgba = np.clip(flipped_rgba, 0, 255)
+
         over(frame, flipped_rgba, x + wobble, HORIZON - 2, a_fade * 0.78)
 
 
@@ -456,6 +527,9 @@ def forest(frame, plates, t, presence, decay=0.0, depth_layers=None, respect_rid
             frame[y0:y1, x0:x1] += (tint - frame[y0:y1, x0:x1]) * src
 
         sprite = spr.copy()
+        if index == 0:
+            # Subtle portrait depth-of-field blur on nearest foreground tree with large angular diameter
+            sprite[:, :, :3] = cv2.GaussianBlur(sprite[:, :, :3], (5, 5), 1.25)
         # Daylight keeps the firs natural; moonlight cools the shaded side subtly.
         warmth = min(0.18, warm * 0.14 + (0.07 if sun_body is not None else 0.0))
         cool = night * 0.09
@@ -531,10 +605,12 @@ def forest_reflect(frame, plates, t, presence, decay=0.0, stillness=0.0):
         reflected[:, :, 3] *= fade * (1.0 - decay * 0.55)
         reflected[:, :, 0] *= 1.0 + warm * 0.08
         reflected[:, :, 2] *= 1.0 + night * 0.06
+        parallax = 1.35 if index in (0, 1) else (1.0 if index == 2 else 0.70)
         reflected = _water_wave_refraction(
-            reflected, t, x, wave_factor, plates.get("audio_feats"), phase=index * 0.7
+            reflected, t, x, wave_factor, plates.get("audio_feats"), phase=index * 0.7, parallax=parallax
         )
-        wobble = int(math.sin(t * 1.1 - (x - 340.0) * 0.006) * 5.0 * wave_factor)
+        speed_factor = max(0.12, wave_factor)
+        wobble = int(math.sin(t * (1.8 * speed_factor + 0.2) - (x - 340.0) * 0.006) * 5.0 * wave_factor * parallax)
         over(frame, reflected, x - w / 2 + wobble, HORIZON + 2, tree_presence)
 
 
@@ -829,7 +905,7 @@ def beasts_reflect(frame, plates, herd, t=0.0, stillness=0.0):
                 wave_shimmer = 1.0 + 0.18 * np.sin(np.arange(max_ref_h)[:, None, None] * 0.16 + t * 3.5) * wave_factor
                 ref_sprite[:, :, 3:4] = np.clip(ref_sprite[:, :, 3:4] * wave_shimmer, 0, 255)
                 ref_sprite = _water_wave_refraction(
-                    ref_sprite, t, x, wave_factor, audio_feats, phase=d_id * 0.8
+                    ref_sprite, t, x, wave_factor, audio_feats, phase=d_id * 0.8, parallax=0.85
                 )
                 
                 eff_over_alpha = lerp(0.60, 0.88, night_factor)
@@ -897,16 +973,14 @@ def _van_gogh_celestial_currents(frame, t, alpha):
 
 
 def shimmering_stars(frame, plates, t, night_amount, stillness=0.0):
-    """Renders shimmering celestial stars with Van Gogh 'Starry Night' luminous breathing halos,
-    ethereal cosmic currents, and ocean mirror reflections."""
+    """Renders shimmering celestial stars with subtle breathing halos and ocean mirror reflections in a pristine, clear night sky."""
     if night_amount < 0.04:
         return
     star_spr = plates.get("star_sprite")
     if star_spr is None:
         return
     
-    # 1. Van Gogh celestial currents in upper sky
-    _van_gogh_celestial_currents(frame, t, night_amount)
+    # Sky clarity: swirling current bands disabled to keep night sky clear and serene
 
     # Constellation coordinates across the night sky (x, y, base_size, frequency, phase)
     constellations = [
@@ -931,18 +1005,18 @@ def shimmering_stars(frame, plates, t, night_amount, stillness=0.0):
         sz = max(10, int(base_sz * (0.85 + 0.30 * shimmer)))
         alpha = night_amount * min(0.96, 0.45 + 0.50 * shimmer * shimmer_slow)
         
-        # 2. Van Gogh luminous concentric halos around celestial stars
-        halo_sz = max(18, int(sz * 2.2))
+        # Subtle starlight halo keeping the sky clear and pristine
+        halo_sz = max(12, int(sz * 1.25))
         halo_pulse = 0.5 + 0.5 * math.sin(t * (freq * 0.8) + phase)
-        halo_alpha = alpha * 0.55 * (0.70 + 0.30 * halo_pulse)
+        halo_alpha = alpha * 0.16 * (0.70 + 0.30 * halo_pulse)
         scaled_halo = cv2.resize(halo_spr, (halo_sz, halo_sz), interpolation=cv2.INTER_LINEAR)
         over(frame, scaled_halo, sx - halo_sz // 2, sy - halo_sz // 2, halo_alpha)
 
-        # 3. Core radiant star sprite
+        # Core radiant star sprite
         scaled_star = cv2.resize(star_spr, (sz, sz), interpolation=cv2.INTER_AREA)
         over(frame, scaled_star, sx - sz // 2, sy - sz // 2, alpha)
 
-        # 4. Still mirror reflection on the ocean when Tanpura brings mind/water to complete stillness
+        # Still mirror reflection on the ocean when Tanpura brings mind/water to complete stillness
         if stillness > 0.05:
             ref_y = HORIZON + int((HORIZON - sy) * 0.75)
             if ref_y < HEIGHT - 20:
@@ -951,7 +1025,7 @@ def shimmering_stars(frame, plates, t, night_amount, stillness=0.0):
                 ref_star = cv2.resize(scaled_star, (ref_sz, ref_sz), interpolation=cv2.INTER_AREA)
                 over(frame, ref_star, sx - ref_sz // 2, ref_y - ref_sz // 2, ref_alpha)
                 # Halo reflection on calm water
-                ref_halo_sz = max(12, int(halo_sz * 0.75))
+                ref_halo_sz = max(10, int(halo_sz * 0.75))
                 ref_halo = cv2.resize(scaled_halo, (ref_halo_sz, ref_halo_sz), interpolation=cv2.INTER_LINEAR)
                 over(frame, ref_halo, sx - ref_halo_sz // 2, ref_y - ref_halo_sz // 2, halo_alpha * 0.40 * float(stillness))
 

@@ -67,6 +67,8 @@ def _sun_sprite():
             [c - rad, c - rad, c + rad, c + rad],
             fill=(255, int(230 * (1 - s * 0.45)), int(150 * (1 - s * 0.75)), 255),
         )
+    # Soften the sun edges with Gaussian blur so the core disk blends atmospherically into the corona
+    im = im.filter(ImageFilter.GaussianBlur(14))
     return np.asarray(im)
 
 
