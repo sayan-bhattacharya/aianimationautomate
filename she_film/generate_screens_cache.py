@@ -149,9 +149,10 @@ def _channel_hop_loop():
         if section == 0:
             yy, xx = np.mgrid[0:out_h, 0:out_w].astype(np.float32)
             glow = np.clip(1.0 - ((xx - out_w * .52) ** 2 / 15000 + (yy - out_h * .44) ** 2 / 26000), 0, 1)
-            frame = np.zeros((out_h, out_w, 3), dtype=np.float32)
-            frame[:] = [48, 32, 63]
-            frame += glow[:, :, None] * np.array([158, 108, 83], dtype=np.float32)
+            frame_f = np.zeros((out_h, out_w, 3), dtype=np.float32)
+            frame_f[:] = [48, 32, 63]
+            frame_f += glow[:, :, None] * np.array([158, 108, 83], dtype=np.float32)
+            frame = np.clip(frame_f, 0, 255).astype(np.uint8)
             cv2.circle(frame, (out_w // 2 - 19, 208), 24, (37, 30, 50), -1, cv2.LINE_AA)
             cv2.circle(frame, (out_w // 2 + 19, 208), 24, (37, 30, 50), -1, cv2.LINE_AA)
             cv2.putText(frame, "TONIGHT ON LOVE TV", (12, 22), cv2.FONT_HERSHEY_SIMPLEX,
