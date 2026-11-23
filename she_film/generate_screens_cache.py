@@ -186,21 +186,24 @@ def build_screens_cache(output_dir=None):
     os.makedirs(output_dir, exist_ok=True)
     cache_dir = os.path.join(film_dir, "cache")
 
-    # Assign distinct programs to all four monitors.
+    # Assign distinct programs to all four monitors:
+    # scr_left: Rom-com "LOVE TV" & cheetah "NATIONAL GEOGRAPHIC" channel surfing loop
+    # scr_mid_left: Dinosaur closed-loop walk animation
+    # scr_mid_right: Dynamic dinosaur simulation perspective loop
+    # scr_right: Cosmic Buddha kaleidoscopic motion
     cosmic_buddha = _read_plate(os.path.join(cache_dir, "buddha_cosmic_demigod.jpg"))
-    meditation = _read_plate(os.path.join(cache_dir, "buddha_human_face_meditating.jpg"))
-    left_plates = [meditation, _detail_crop(meditation, 0.52, 0.49, 1.25)]
     right_plates = [
         _detail_crop(cosmic_buddha, 0.52, 0.37, 2.15),
         _detail_crop(cosmic_buddha, 0.52, 0.69, 2.45),
     ]
-    arr_left = _make_loop(left_plates, variant=0)
     arr_right = _make_loop(right_plates, variant=1)
     arr_dino = _dinosaur_plate(os.path.join(cache_dir, "flow_pokemon_dino_scaled.png"))
     arr_channels = _channel_hop_loop()
+    arr_dino_sim = _detail_crop(arr_dino, 0.5, 0.5, 1.15) if arr_dino.ndim == 3 else arr_dino[:, :, ::-1]
+    
     out_npz = os.path.join(output_dir, "screens_90s.npz")
-    np.savez_compressed(out_npz, scr_left=arr_left, scr_mid_left=arr_dino,
-                        scr_mid_right=arr_channels, scr_right=arr_right)
+    np.savez_compressed(out_npz, scr_left=arr_channels, scr_mid_left=arr_dino,
+                        scr_mid_right=arr_dino_sim, scr_right=arr_right)
     print(f"[CACHE] Built Buddha B-roll CRT loops: {out_npz} ({os.path.getsize(out_npz) / 1024 / 1024:.2f} MB)")
     return out_npz
 

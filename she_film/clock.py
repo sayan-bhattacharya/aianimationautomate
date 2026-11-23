@@ -236,7 +236,8 @@ def forest_cycle(t):
     if t < FIR_EMERGENCE_START or t >= 404.0:
         return 0.0, 0.0
     grow = smooth((t - FIR_EMERGENCE_START) / (FIR_EMERGENCE_END - FIR_EMERGENCE_START))
-    decay = smooth((t - 391.0) / 9.0)
+    # Ethereal fadeout of trees from 6m30s (390s) onward so Buddha takes full prominence
+    decay = smooth((t - 390.0) / 14.0)
     return grow * (1.0 - decay), decay
 
 

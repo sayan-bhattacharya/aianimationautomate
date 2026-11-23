@@ -112,22 +112,25 @@ def over(frame, sprite, x, y, alpha=1.0):
 
 
 def _water_wave_refraction(reflection, t, anchor_x, wave_factor, audio_feats, phase=0.0):
-    """Break a mirrored actor silhouette along moving, music-responsive wavelets."""
+    """Break a mirrored actor silhouette along moving, music-responsive wavelets following wave crests and troughs."""
     if reflection is None or wave_factor < 0.01:
         return reflection
     h, w = reflection.shape[:2]
     energy = mirage.music_energy(audio_feats, t)
     yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
     depth = np.clip(yy / max(1.0, h - 1.0), 0.0, 1.0)
-    phase_field = yy * 0.19 + xx * 0.018 + float(t) * 1.7 + anchor_x * 0.007 + phase
-    dx = wave_factor * (1.1 + 3.2 * energy) * depth * np.sin(phase_field)
-    dy = wave_factor * 0.32 * depth * np.sin(xx * 0.026 - float(t) * 1.25 + phase)
+    # Accelerated wave frequency & realistic crest/trough displacement
+    phase_x = yy * 0.16 + xx * 0.024 + float(t) * 2.8 + anchor_x * 0.007 + phase
+    phase_y = xx * 0.032 - float(t) * 2.2 + yy * 0.08 + phase
+    dx = wave_factor * (4.2 + 3.8 * energy) * (0.35 + 0.65 * depth) * np.sin(phase_x)
+    dy = wave_factor * (3.0 + 2.4 * energy) * (0.25 + 0.75 * depth) * np.cos(phase_y)
     map_x = np.clip(xx - dx, 0, w - 1).astype(np.float32)
     map_y = np.clip(yy + dy, 0, h - 1).astype(np.float32)
     out = cv2.remap(reflection, map_x, map_y, cv2.INTER_LINEAR,
                     borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0, 0))
-    crest = np.abs(np.sin(phase_field * 0.62))
-    out[:, :, 3] *= 1.0 - wave_factor * (0.045 + 0.055 * energy) * crest
+    # Crest break lines: crests shimmer and break naturally along wave ridges
+    crest = np.abs(np.sin(phase_x * 0.75))
+    out[:, :, 3] *= 1.0 - wave_factor * (0.08 + 0.12 * energy) * crest
     return out
 
 
@@ -268,9 +271,9 @@ def _get_active_mushroom_stands(plates, t):
         if stand_index == 1:
             raw, decay_scale = mushroom2_lifecycle_frame(plates, age)
             grow_scale *= decay_scale
-            decay_amount = smooth((age - MUSHROOM2_DECAY_HOLD_END) /
-                                  (MUSHROOM2_DECAY_END - MUSHROOM2_DECAY_HOLD_END))
-            a_fade = min(1.0, age / 0.8) * (1.0 - 0.25 * decay_amount)
+            # User feedback: Depth in Z direction should NOT just be translucency/opacity reduction.
+            # Keep opacity solid (0.94) and apply depth-of-field Gaussian blur with subtle dithering.
+            a_fade = min(0.96, max(0.85, age / 0.8))
         elif age < MUSHROOM_GROWTH_SECONDS:
             raw = (mushroom_target_frame(vs_growth, age)
                    if stand_index in MUSHROOM_HOLD_INDICES
@@ -297,6 +300,11 @@ def _get_active_mushroom_stands(plates, t):
         tw = max(16, int(raw.shape[1] * grow_scale))
         th = max(16, int(raw.shape[0] * grow_scale))
         scaled = cv2.resize(raw, (tw, th), interpolation=cv2.INTER_LINEAR)
+        if stand_index == 1:
+            # Depth-of-field blur and subtle atmospheric dithering for organic Z-depth
+            blurred_bgr = cv2.GaussianBlur(scaled[:, :, :3], (7, 7), 1.5)
+            noise = np.random.default_rng(42 + int(x)).normal(0, 3.0, (scaled.shape[0], scaled.shape[1], 3)).astype(np.float32)
+            scaled[:, :, :3] = np.clip(blurred_bgr + noise, 0, 255)
         # Root each sprite on the visible, topmost land contour at its x. A
         # fixed baseline and a single foreground-ridge baseline both mis-seat
         # plants where the layered hills slope or overlap.

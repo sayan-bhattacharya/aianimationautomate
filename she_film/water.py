@@ -29,7 +29,7 @@ def paint(base_row, t, lamps, stillness=0.0, audio_feats=None):
         if weight < 0.03 or origin_x is None:
             continue
         wobble = wave_factor * (
-            12.0 * np.sin(QY * 0.22 + t * 1.4) + 5.0 * np.sin(QY * 0.47 - t * 2.0)
+            14.0 * np.sin(QY * 0.24 + t * 2.2) + 6.5 * np.sin(QY * 0.48 - t * 2.6)
         )
         path_x = (origin_x / STEP) + (QW * 0.5 - origin_x / STEP) * QF * 0.08 + wobble / STEP
         half = (width0 + width1 * QF) / STEP
@@ -39,9 +39,9 @@ def paint(base_row, t, lamps, stillness=0.0, audio_feats=None):
         reflection_mix = mask[:, :, None] * 0.36
         wq = wq * (1.0 - reflection_mix) + tint * reflection_mix
         
-        # Crest highlights flatten out completely when still
+        # Crest highlights with slightly increased wave velocity
         if wave_factor > 0.01:
-            crest = np.clip(np.sin(QY * 0.55 + np.sin(QX * 0.05 + t * 0.7) + t * 0.4) - 0.72, 0, 1) * wave_factor
+            crest = np.clip(np.sin(QY * 0.58 + np.sin(QX * 0.06 + t * 1.1) + t * 0.8) - 0.70, 0, 1) * wave_factor
             near = np.exp(-0.5 * ((QX - origin_x / STEP) / (half * 0.9 + 1)) ** 2)
             wq += (crest * near * weight)[:, :, None] * tint * 0.16
 
