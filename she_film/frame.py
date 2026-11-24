@@ -115,8 +115,10 @@ def _scaled_sun(sprite, radius, squash):
         h = max(8, int(w * squash))
         hit = np.asarray(im.resize((w, h), Image.Resampling.BILINEAR)).astype(np.float32)
         hit[:, :, 3] *= 1.0 / 255.0
-        # Soft atmospheric sun edge blur
-        hit[:, :, 3] = cv2.GaussianBlur(hit[:, :, 3], (0, 0), 2.5)
+        # Soft atmospheric sun edge blur and optical corona glow
+        hit[:, :, 3] = cv2.GaussianBlur(hit[:, :, 3], (0, 0), 5.5)
+        glow = cv2.GaussianBlur(hit[:, :, 3], (0, 0), 12.0)
+        hit[:, :, 3] = np.clip(hit[:, :, 3] * 0.85 + glow * 0.25, 0.0, 1.0)
         _SUN_CACHE[key] = hit
     return hit
 

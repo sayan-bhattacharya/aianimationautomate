@@ -316,15 +316,31 @@ def _get_active_mushroom_stands(plates, t):
         th = max(16, int(raw.shape[0] * grow_scale))
         scaled = cv2.resize(raw, (tw, th), interpolation=cv2.INTER_LINEAR)
 
-        # Portrait blur & depth of field on closer foreground stands
-        if stand_index == 0:
-            # Nearest foreground stand has larger angular diameter: subtle portrait optical softness
-            scaled[:, :, :3] = cv2.GaussianBlur(scaled[:, :, :3], (5, 5), 1.25)
-        elif stand_index == 1:
-            # Depth-of-field blur and subtle atmospheric dithering for organic Z-depth
-            blurred_bgr = cv2.GaussianBlur(scaled[:, :, :3], (7, 7), 1.5)
-            noise = np.random.default_rng(42 + int(x)).normal(0, 3.0, (scaled.shape[0], scaled.shape[1], 3)).astype(np.float32)
-            scaled[:, :, :3] = np.clip(blurred_bgr + noise, 0, 255)
+        # Optical Depth of Field & Atmospheric Perspective (Reverse-engineered from Flow reference):
+        # Stand 3 is the primary in-focus hero focal point (pin-sharp); distant and near stands have progressive optical defocus and atmospheric haze.
+        day, warm, night = sky_weights(t)
+        sky_ambient = np.array([
+            210.0 * day + 130.0 * warm + 38.0 * night,
+            205.0 * day + 95.0 * warm + 26.0 * night,
+            198.0 * day + 70.0 * warm + 20.0 * night
+        ], dtype=np.float32)
+
+        depth_profiles = {
+            3: (0.0, 0.0),      # Hero stand (focal plane): pin-sharp focus, full punchy contrast
+            0: (1.25, 0.04),    # Left foreground stand: subtle portrait optical softness
+            1: (1.8, 0.12),     # Mid-ground stand: mild optical defocus & atmospheric softening
+            2: (1.6, 0.16),     # Mid-distance stand: subtle depth defocus & atmospheric veil
+            4: (2.8, 0.26),     # Far background stand: authentic aerial perspective & defocus
+        }
+        sigma, haze = depth_profiles.get(stand_index, (0.0, 0.0))
+
+        if sigma > 0.1:
+            ksize = int(round(sigma * 3)) * 2 + 1
+            scaled[:, :, :3] = cv2.GaussianBlur(scaled[:, :, :3], (ksize, ksize), sigma)
+            scaled[:, :, 3] = cv2.GaussianBlur(scaled[:, :, 3], (ksize, ksize), sigma)
+
+        if haze > 0.01:
+            scaled[:, :, :3] = scaled[:, :, :3] * (1.0 - haze) + sky_ambient * haze
 
         # Root each sprite on the visible, topmost land contour at its x.
         ground_y = HORIZON - 16
