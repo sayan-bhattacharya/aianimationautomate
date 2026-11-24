@@ -334,26 +334,20 @@ def _get_active_mushroom_stands(plates, t):
         top = ground_y - th
 
         # Seamless Root Integration into Beach Soil:
-        # Mask each column of the root base to conform to local ridge dune contour
-        if ground_profile is not None:
-            left_col = int(x - tw // 2)
-            for c in range(tw):
-                xw = np.clip(left_col + c, 0, WIDTH - 1)
-                y_soil = ground_profile[xw]
-                r_soil = int(y_soil - top)
-                if 0 <= r_soil < th:
-                    depth_in_sand = np.arange(th - r_soil, dtype=np.float32)
-                    scaled[r_soil:, c, 3] *= np.clip(1.0 - depth_in_sand / 5.0, 0.0, 1.0)
-                elif r_soil < 0:
-                    scaled[:, c, 3] = 0.0
+        # Match local time-of-day illumination dynamically to current sun/twilight/night state
+        day, warm, night = sky_weights(t)
+        dune_sand_color = np.array([
+            186.0 * warm + 150.0 * day + 42.0 * night,
+            96.0 * warm + 142.0 * day + 40.0 * night,
+            64.0 * warm + 160.0 * day + 68.0 * night
+        ], dtype=np.float32)
 
-        # Sand Dune Encasement: blend the warm beach sand dune tone smoothly up into the lower root flare
-        # so the mushroom organically rises out of the sand dune matrix
+        # Seamless root embedding without empty pixels:
+        # Softly blend root base tone into local dune sand where roots clasp the ground
         sand_encase_h = max(10, int(th * 0.16))
-        sand_up = np.linspace(0.0, 0.68, sand_encase_h, dtype=np.float32)[:, None]
-        sand_color = np.array([130.0, 146.0, 172.0], dtype=np.float32)  # warm coastal beach sand
-        stalk_mask = (scaled[th - sand_encase_h:th, :, 3:4] > 0.15).astype(np.float32)
-        scaled[th - sand_encase_h:th, :, :3] += (sand_color - scaled[th - sand_encase_h:th, :, :3]) * sand_up[:, :, None] * stalk_mask
+        sand_up = np.linspace(0.0, 0.72, sand_encase_h, dtype=np.float32)[:, None]
+        stalk_mask = (scaled[th - sand_encase_h:th, :, 3:4] > 0.10).astype(np.float32)
+        scaled[th - sand_encase_h:th, :, :3] += (dune_sand_color - scaled[th - sand_encase_h:th, :, :3]) * sand_up[:, :, None] * stalk_mask
 
         if t >= 400.0:
             # Bioluminescent celestial blue glow on returning mushrooms
@@ -416,7 +410,14 @@ def life(frame, plates, t, alpha=1.0):
         if ly1 > ly0 and lx1 > lx0:
             patch = lip_mask[(ly0 - (ground_y - 2)):(ly1 - (ground_y - 2)),
                              (lx0 - (int(x + spr.shape[1] // 2) - lip_w)):(lx1 - (int(x + spr.shape[1] // 2) - lip_w))]
-            sand_lip_col = np.array([135.0, 148.0, 172.0], dtype=np.float32)
+            day, warm, night = sky_weights(t)
+            dune_sand_color = np.array([
+                186.0 * warm + 150.0 * day + 42.0 * night,
+                96.0 * warm + 142.0 * day + 40.0 * night,
+                64.0 * warm + 160.0 * day + 68.0 * night
+            ], dtype=np.float32)
+            sand_crest = np.array([24.0 * warm + 14.0 * day + 6.0 * night, 14.0 * warm + 10.0 * day + 6.0 * night, 8.0 * warm + 6.0 * day + 10.0 * night], dtype=np.float32)
+            sand_lip_col = dune_sand_color + sand_crest
             frame_patch = frame[ly0:ly1, lx0:lx1].astype(np.float32)
             blend_a = patch[:, :, None] * (0.82 * alpha * a_fade)
             frame[ly0:ly1, lx0:lx1] = np.clip(frame_patch * (1.0 - blend_a) + sand_lip_col * blend_a, 0, 255).astype(np.uint8)
@@ -629,7 +630,13 @@ def forest(frame, plates, t, presence, decay=0.0, depth_layers=None, respect_rid
         if tly1 > tly0 and tlx1 > tlx0:
             patch = tree_lip_mask[(tly0 - (ground_y - 2)):(tly1 - (ground_y - 2)),
                                   (tlx0 - (int(x) - tree_lip_w)):(tlx1 - (int(x) - tree_lip_w))]
-            sand_col = np.array([130.0, 144.0, 168.0], dtype=np.float32)
+            day, warm, night = sky_weights(t)
+            dune_sand_color = np.array([
+                186.0 * warm + 150.0 * day + 42.0 * night,
+                96.0 * warm + 142.0 * day + 40.0 * night,
+                64.0 * warm + 160.0 * day + 68.0 * night
+            ], dtype=np.float32)
+            sand_col = dune_sand_color + np.array([20.0 * warm + 12.0 * day + 6.0 * night, 12.0 * warm + 8.0 * day + 6.0 * night, 6.0 * warm + 4.0 * day + 8.0 * night], dtype=np.float32)
             f_patch = frame[tly0:tly1, tlx0:tlx1].astype(np.float32)
             blend_a = patch[:, :, None] * (0.80 * tree_presence)
             frame[tly0:tly1, tlx0:tlx1] = np.clip(f_patch * (1.0 - blend_a) + sand_col * blend_a, 0, 255).astype(np.uint8)
