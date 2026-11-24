@@ -297,15 +297,36 @@ mushroom3_target_frame = mushroom_target_frame
 MUSHROOM3_TARGET_INDEX = 2
 
 
-def _parasympathetic_swell_mod(t):
-    """Headspace-style parasympathetic exhale during the 1m53s (113.0s–121.5s) musical swell."""
-    if t < 113.0 or t > 125.0:
-        return 1.0, 1.0
-    if t < 121.5:
-        p = smooth((t - 113.0) / 8.5)
-        return 1.0 - 0.32 * p, 1.0 - 0.10 * p
-    r = smooth((t - 121.5) / 3.5)
-    return 0.68 + 0.32 * r, 0.90 + 0.10 * r
+def _drone_swell_strength(audio_feats, t):
+    """Smooth 3-second drone/bass swell envelope (0..1) with zero frame jitter."""
+    if audio_feats is None or len(audio_feats) == 0:
+        return 0.0
+    center = min(len(audio_feats) - 1, max(0, int(float(t) * 24.0)))
+    lo, hi = max(0, center - 36), min(len(audio_feats), center + 37)
+    seg = audio_feats[lo:hi]
+    drone = float(np.mean(seg[:, 0] * 0.55 + seg[:, 3] * 0.45))
+    return float(np.clip((drone - 0.06) / 0.52, 0.0, 1.0))
+
+
+def _parasympathetic_swell_mod(t, audio_feats=None):
+    """Headspace-style parasympathetic exhale coupled tightly to drone swells
+    across all mushroom appearances, with a deep 0.68x release at 1m53s–2m01s."""
+    swell_drive = _drone_swell_strength(audio_feats, t)
+    h_audio = 1.0 - 0.22 * swell_drive
+    w_audio = 1.0 - 0.07 * swell_drive
+
+    if 113.0 <= t <= 125.0:
+        if t < 121.5:
+            p = smooth((t - 113.0) / 8.5)
+            h_explicit = 1.0 - 0.32 * p
+            w_explicit = 1.0 - 0.10 * p
+        else:
+            r = smooth((t - 121.5) / 3.5)
+            h_explicit = 0.68 + 0.32 * r
+            w_explicit = 0.90 + 0.10 * r
+        return min(h_audio, h_explicit), min(w_audio, w_explicit)
+
+    return h_audio, w_audio
 
 
 def _get_active_mushroom_stands(plates, t):
@@ -377,7 +398,7 @@ def _get_active_mushroom_stands(plates, t):
                 raw = cv2.warpAffine(raw, M, (raw.shape[1], raw.shape[0]),
                                      borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0, 0))
 
-        swell_h_mod, swell_w_mod = _parasympathetic_swell_mod(t)
+        swell_h_mod, swell_w_mod = _parasympathetic_swell_mod(t, plates.get("audio_feats"))
         tw = max(16, int(raw.shape[1] * grow_scale * swell_w_mod))
         th = max(16, int(raw.shape[0] * grow_scale * swell_h_mod))
         scaled = cv2.resize(raw, (tw, th), interpolation=cv2.INTER_LINEAR)
