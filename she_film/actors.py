@@ -258,7 +258,7 @@ def _get_active_mushroom_stands(plates, t):
         stages = plates.get("life", [])
         if stages:
             spr = stages[min(len(stages) - 1, int(t * 0.1) % len(stages))]
-            stands.append((spr, 640 - spr.shape[1] // 2, base_y - spr.shape[0], 1.0, 1.0))
+            stands.append((spr, 640 - spr.shape[1] // 2, (HORIZON - 16) - spr.shape[0], 1.0, 1.0))
         return stands
 
     for stand_index, (x, t0, b_scale) in enumerate(MUSHROOM_STANDS):
