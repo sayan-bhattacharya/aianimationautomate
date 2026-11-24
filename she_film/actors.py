@@ -373,11 +373,13 @@ def life(frame, plates, t, alpha=1.0):
         ground_y = stand[6] if len(stand) > 6 else HORIZON - 1
         
         # Grounding Ambient Occlusion (AO) contact shadow directly joining stalk to sand
-        ao_w = max(20, int(spr.shape[1] * 0.32))
-        ao_h = max(4, int(ao_w * 0.20))
+        # Constrained vertically so it naturally tapers to zero without hard flat clipping
+        max_depth_to_water = max(2, HORIZON - 1 - ground_y)
+        ao_w = max(18, int(spr.shape[1] * 0.28))
+        ao_h = max(2, min(5, int(max_depth_to_water * 0.6)))
         ao_mask = np.zeros((ao_h * 2 + 1, ao_w * 2 + 1), dtype=np.float32)
         cv2.ellipse(ao_mask, (ao_w, ao_h), (ao_w, ao_h), 0, 0, 360, 1.0, -1)
-        ao_mask = cv2.GaussianBlur(ao_mask, (0, 0), max(1.5, ao_h * 0.7))
+        ao_mask = cv2.GaussianBlur(ao_mask, (0, 0), max(1.0, ao_h * 0.6))
         sy0 = max(0, ground_y - ao_h)
         sy1 = min(HORIZON, ground_y + ao_h + 1)
         sx0 = max(0, int(x + spr.shape[1] // 2) - ao_w)
@@ -385,7 +387,7 @@ def life(frame, plates, t, alpha=1.0):
         if sy1 > sy0 and sx1 > sx0:
             patch = ao_mask[sy0 - (ground_y - ao_h):sy1 - (ground_y - ao_h),
                             sx0 - (int(x + spr.shape[1] // 2) - ao_w):sx1 - (int(x + spr.shape[1] // 2) - ao_w)]
-            ao_factor = 1.0 - patch * (0.42 * alpha * a_fade)
+            ao_factor = 1.0 - patch * (0.35 * alpha * a_fade)
             frame[sy0:sy1, sx0:sx1] = np.clip(
                 frame[sy0:sy1, sx0:sx1].astype(np.float32) * ao_factor[:, :, None],
                 0, 255
@@ -395,20 +397,19 @@ def life(frame, plates, t, alpha=1.0):
         over(frame, spr, x, y, alpha * a_fade)
 
         # Foreground Sand Dune Drift Lip / Sand Cradle:
-        # A natural wind-swept sand dune drift wraps in front of the root flare
-        # so the stalk is physically embedded down into and emerging up out of the sand dune!
-        lip_w = max(22, int(spr.shape[1] * 0.40))
-        lip_h = max(4, int(spr.shape[0] * 0.035))
+        # A soft organic sand drift that wraps in front of root tips with zero rectangular edges
+        lip_w = max(18, int(spr.shape[1] * 0.30))
+        lip_h = max(2, min(4, int(max_depth_to_water * 0.5)))
         lip_mask = np.zeros((lip_h * 2 + 1, lip_w * 2 + 1), dtype=np.float32)
-        cv2.ellipse(lip_mask, (lip_w, lip_h), (lip_w, lip_h), 0, 0, 180, 1.0, -1)
-        lip_mask = cv2.GaussianBlur(lip_mask, (0, 0), max(1.2, lip_h * 0.6))
+        cv2.ellipse(lip_mask, (lip_w, lip_h), (lip_w, lip_h), 0, 0, 360, 1.0, -1)
+        lip_mask = cv2.GaussianBlur(lip_mask, (0, 0), max(1.0, lip_h * 0.5))
         
         lx0 = max(0, int(x + spr.shape[1] // 2) - lip_w)
         lx1 = min(WIDTH, int(x + spr.shape[1] // 2) + lip_w + 1)
-        ly0 = max(0, ground_y - 2)
+        ly0 = max(0, ground_y - lip_h)
         ly1 = min(HORIZON, ground_y + lip_h + 1)
         if ly1 > ly0 and lx1 > lx0:
-            patch = lip_mask[(ly0 - (ground_y - 2)):(ly1 - (ground_y - 2)),
+            patch = lip_mask[(ly0 - (ground_y - lip_h)):(ly1 - (ground_y - lip_h)),
                              (lx0 - (int(x + spr.shape[1] // 2) - lip_w)):(lx1 - (int(x + spr.shape[1] // 2) - lip_w))]
             day, warm, night = sky_weights(t)
             dune_sand_color = np.array([
