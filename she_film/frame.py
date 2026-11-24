@@ -4,7 +4,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from she_film import actors, mirage, water
+from she_film import actors, grade, mirage, water
 from she_film.mirage import refract_background
 from she_film.clock import (
     HEIGHT,
@@ -590,6 +590,9 @@ def render(plates, t):
         frame[:, :, 0] += 48.0 * warmth
         frame[:, :, 1] += 22.0 * warmth
     frame *= plates["vignette"]
+
+    # Apply scene-specific "SHE Crystal Nocturne" teal-and-orange grade before end card
+    frame = grade.crystal_nocturne(frame, t)
 
     # Give the awakened studio a short, gentle handoff to a restrained brand
     # end card. The final two seconds fade both picture and credits to black.
