@@ -366,10 +366,11 @@ def _get_active_mushroom_stands(plates, t):
         scaled[th - sand_encase_h:th, :, :3] += (dune_sand_color - scaled[th - sand_encase_h:th, :, :3]) * sand_up[:, :, None] * stalk_mask
 
         if t >= 400.0:
-            # Bioluminescent celestial blue glow on returning mushrooms
+            # Bioluminescent celestial blue glow on returning mushrooms, modulated by musical phrasing
             return_progress = min(1.0, max(0.0, (t - 400.0) / 12.0))
+            music_e = mirage.music_energy(plates.get("audio_feats"), t)
             cap_rows = int(th * 0.65)
-            pulse = 0.70 + 0.30 * math.sin(t * 3.2 + wave_delay * 2.0)
+            pulse = (0.68 + 0.24 * math.sin(t * 3.2 + wave_delay * 2.0)) * (0.85 + 0.35 * music_e)
             cap_mask = scaled[:cap_rows, :, 3] * np.linspace(1.0, 0.0, cap_rows, dtype=np.float32)[:, None]
             blue_lum = np.array([235.0, 175.0, 45.0], dtype=np.float32)  # cyan-blue radiance in BGR
             scaled[:cap_rows, :, :3] += blue_lum * (cap_mask[:, :, None] * 0.45 * pulse * return_progress)
@@ -442,12 +443,13 @@ def life(frame, plates, t, alpha=1.0):
         # Ascending bioluminescent blue spores on returning mushrooms (t >= 400s)
         if t >= 400.0:
             return_progress = min(1.0, max(0.0, (t - 400.0) / 12.0))
+            music_e = mirage.music_energy(plates.get("audio_feats"), t)
             for sp_idx in range(5):
                 sp_phase = sp_idx * 1.3 + stand_index * 0.8
                 sp_y = ground_y - int(spr.shape[0] * 0.65) - int(((t * 24.0 + sp_phase * 35.0) % 95.0))
                 sp_x = int(x + spr.shape[1] // 2 + math.sin(t * 1.8 + sp_phase) * (spr.shape[1] * 0.30))
                 sp_sz = 2 + (sp_idx % 2)
-                sp_a = alpha * a_fade * return_progress * (0.45 + 0.40 * math.sin(t * 4.0 + sp_phase))
+                sp_a = alpha * a_fade * return_progress * (0.40 + 0.35 * math.sin(t * 4.0 + sp_phase)) * (0.82 + 0.38 * music_e)
                 if 0 <= sp_x < WIDTH and 0 <= sp_y < HORIZON and sp_a > 0.05:
                     cv2.circle(frame, (sp_x, sp_y), sp_sz + 1, (240, 180, 50), -1, cv2.LINE_AA)
                     cv2.circle(frame, (sp_x, sp_y), sp_sz, (255, 240, 190), -1, cv2.LINE_AA)
@@ -1069,6 +1071,7 @@ def shimmering_stars(frame, plates, t, night_amount, stillness=0.0):
     ]
     
     halo_spr = _get_van_gogh_halo_sprite()
+    music_e = mirage.music_energy(plates.get("audio_feats"), t)
     for sx, sy, base_sz, freq, phase in constellations:
         # Scintillation twinkle pulse
         shimmer = 0.5 + 0.5 * math.sin(t * freq + phase)
@@ -1076,10 +1079,10 @@ def shimmering_stars(frame, plates, t, night_amount, stillness=0.0):
         sz = max(10, int(base_sz * (0.85 + 0.30 * shimmer)))
         alpha = night_amount * min(0.96, 0.45 + 0.50 * shimmer * shimmer_slow)
         
-        # Subtle starlight halo keeping the sky clear and pristine
+        # Subtle starlight halo keeping the sky clear and pristine, breathing with the music
         halo_sz = max(12, int(sz * 1.25))
         halo_pulse = 0.5 + 0.5 * math.sin(t * (freq * 0.8) + phase)
-        halo_alpha = alpha * 0.16 * (0.70 + 0.30 * halo_pulse)
+        halo_alpha = alpha * 0.16 * (0.70 + 0.30 * halo_pulse) * (0.85 + 0.30 * music_e)
         scaled_halo = cv2.resize(halo_spr, (halo_sz, halo_sz), interpolation=cv2.INTER_LINEAR)
         over(frame, scaled_halo, sx - halo_sz // 2, sy - halo_sz // 2, halo_alpha)
 

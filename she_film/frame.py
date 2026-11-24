@@ -513,9 +513,10 @@ def render(plates, t):
     if arrived is not None:
         cx, cy, near = arrived[:3]
         visibility = float(arrived[3]) if len(arrived) > 3 else 1.0
+        music_e = mirage.music_energy(plates.get("audio_feats"), t)
         # Flying saucer celestial glitter column across the ocean waves (matching the moon style)
         saucer_alt = max(0.0, float(HORIZON - cy))
-        saucer_wt = min(0.11, (0.025 + 0.10 * near) * max(0.0, 1.0 - saucer_alt / 480.0)) * visibility
+        saucer_wt = min(0.11, (0.025 + 0.10 * near) * max(0.0, 1.0 - saucer_alt / 480.0)) * visibility * (0.90 + 0.25 * music_e)
         if saucer_wt > 0.04:
             # A restrained crystal streak follows the craft without a hard beam.
             lamps.append((cx, saucer_wt, (188, 211, 232), 16, 104,
