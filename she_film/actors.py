@@ -139,12 +139,58 @@ def _water_wave_refraction(reflection, t, anchor_x, wave_factor, audio_feats, ph
     return out
 
 
+def _aurora_timelapse(frame, t, night):
+    """Exaggerated northern-lights time-lapse ribbons flowing across the night sky."""
+    if night < 0.06:
+        return
+    sky_h = HORIZON - 12
+    step = 4
+    sh, sw = sky_h // step, WIDTH // step
+    xs = np.linspace(0.0, WIDTH, sw, dtype=np.float32)[None, :]
+    ys = np.linspace(0.0, sky_h, sh, dtype=np.float32)[:, None]
+
+    # Flowing curtains at time-lapse speed, sweeping across stages of the night
+    wave1 = np.sin(xs * 0.0045 - t * 0.48 + 0.6 * np.sin(xs * 0.002 + t * 0.18))
+    wave2 = np.cos(xs * 0.0072 + t * 0.62)
+    curtain_y = sky_h * (0.34 + 0.14 * wave1 + 0.07 * wave2)
+    band_spread = 46.0 + 18.0 * np.sin(xs * 0.003 - t * 0.31)
+    # Asymmetric vertical curtain: crisp lower edge, soft upward fade
+    dy = ys - curtain_y
+    upward = np.where(dy < 0.0, np.exp(-0.5 * (dy / band_spread) ** 2), np.exp(-0.5 * (dy / (band_spread * 0.35)) ** 2))
+
+    # Color progression across the night: emerald-teal -> cyan -> violet-magenta aurora
+    stage_p = 0.5 + 0.5 * math.sin(t * 0.085)
+    col_emerald = np.array([125.0, 220.0, 62.0], dtype=np.float32)
+    col_cyan = np.array([225.0, 185.0, 58.0], dtype=np.float32)
+    col_violet = np.array([205.0, 82.0, 168.0], dtype=np.float32)
+    ribbon_mix = (0.5 + 0.5 * np.sin(xs * 0.004 - t * 0.35))[:, :, None]
+    aurora_col = (
+        col_emerald[None, None, :] * (1.0 - stage_p) * (1.0 - ribbon_mix * 0.5)
+        + col_cyan[None, None, :] * (0.45 + 0.35 * ribbon_mix)
+        + col_violet[None, None, :] * stage_p * 0.75
+    )
+
+    intensity = upward * (0.16 + 0.14 * (0.5 + 0.5 * wave1)) * night
+    aurora_q = intensity[:, :, None] * aurora_col
+    aurora_full = cv2.resize(aurora_q, (WIDTH, sky_h), interpolation=cv2.INTER_LINEAR)
+    frame[:sky_h] = np.clip(frame[:sky_h] + aurora_full, 0.0, 255.0)
+
+
 def stars(frame, plates, t, night, moon_body):
-    """Twinkle. Moonlight quiets them, most of all the ones beside the moon."""
+    """Exaggerated time-lapse star sheet + northern lights flowing across night stages."""
     if night < 0.08:
         return
-    xs, ys, mag, phase = plates["stars"]
-    twinkle = 0.62 + 0.38 * np.sin(t * 1.7 + phase)
+    _aurora_timelapse(frame, t, night)
+    xs0, ys0, mag, phase = plates["stars"]
+    # Exaggerated time-lapse rotation/drift of the entire star sheet across the heavens
+    cx, cy = WIDTH * 0.5, -260.0
+    theta = (t - 120.0) * 0.022
+    ct, st = math.cos(theta), math.sin(theta)
+    dx0, dy0 = xs0 - cx, ys0 - cy
+    xs = (cx + dx0 * ct - dy0 * st) % WIDTH
+    ys = (cy + dx0 * st + dy0 * ct) % (HORIZON - 8)
+
+    twinkle = 0.62 + 0.38 * np.sin(t * 1.9 + phase)
     wash = night
     if moon_body is not None:
         mx, alt = moon_body
@@ -153,14 +199,21 @@ def stars(frame, plates, t, night, moon_body):
         local = np.exp(-0.5 * (dist / 220.0) ** 2)
         height = min(1.0, max(0.0, alt / 280.0))
         wash = night * (1.0 - 0.42 * height) * (1.0 - 0.72 * local)
-        twinkle = 0.78 + (0.22 + 0.2 * (1.0 - height)) * np.sin(t * 1.7 + phase)
+        twinkle = 0.78 + (0.22 + 0.2 * (1.0 - height)) * np.sin(t * 1.9 + phase)
     alpha = np.clip(mag * twinkle * wash, 0, 1)
     keep = alpha > 0.08
     if not np.any(keep):
         return
     x = xs[keep].astype(np.int32)
     y = ys[keep].astype(np.int32)
-    col = (210 + 35 * alpha[keep])[:, None] * np.array([0.90, 0.94, 1.0], dtype=np.float32)
+    # Shift star-sheet tint across night stages (silver-blue -> sapphire -> aurora-cyan)
+    stage = 0.5 + 0.5 * math.sin(t * 0.07)
+    sheet_tint = np.array([
+        0.92 + 0.08 * stage,
+        0.92 + 0.06 * (1.0 - stage),
+        0.98 - 0.10 * stage,
+    ], dtype=np.float32)
+    col = (214 + 38 * alpha[keep])[:, None] * sheet_tint
     frame[y, x] = frame[y, x] * (1.0 - alpha[keep][:, None]) + col * alpha[keep][:, None]
 
 
@@ -452,20 +505,6 @@ def life(frame, plates, t, alpha=1.0):
             frame_patch = frame[ly0:ly1, lx0:lx1].astype(np.float32)
             blend_a = patch[:, :, None] * (0.82 * alpha * a_fade)
             frame[ly0:ly1, lx0:lx1] = np.clip(frame_patch * (1.0 - blend_a) + sand_lip_col * blend_a, 0, 255).astype(np.uint8)
-
-        # Ascending bioluminescent blue spores on returning mushrooms (t >= 400s)
-        if t >= 400.0:
-            return_progress = min(1.0, max(0.0, (t - 400.0) / 12.0))
-            music_e = mirage.music_energy(plates.get("audio_feats"), t)
-            for sp_idx in range(5):
-                sp_phase = sp_idx * 1.3 + stand_index * 0.8
-                sp_y = ground_y - int(spr.shape[0] * 0.65) - int(((t * 24.0 + sp_phase * 35.0) % 95.0))
-                sp_x = int(x + spr.shape[1] // 2 + math.sin(t * 1.8 + sp_phase) * (spr.shape[1] * 0.30))
-                sp_sz = 2 + (sp_idx % 2)
-                sp_a = alpha * a_fade * return_progress * (0.40 + 0.35 * math.sin(t * 4.0 + sp_phase)) * (0.82 + 0.38 * music_e)
-                if 0 <= sp_x < WIDTH and 0 <= sp_y < HORIZON and sp_a > 0.05:
-                    cv2.circle(frame, (sp_x, sp_y), sp_sz + 1, (240, 180, 50), -1, cv2.LINE_AA)
-                    cv2.circle(frame, (sp_x, sp_y), sp_sz, (255, 240, 190), -1, cv2.LINE_AA)
 
 
 def life_reflect(frame, plates, t, stillness=0.0):
@@ -1131,7 +1170,10 @@ def shimmering_stars(frame, plates, t, night_amount, stillness=0.0):
     
     halo_spr = _get_van_gogh_halo_sprite()
     music_e = mirage.music_energy(plates.get("audio_feats"), t)
-    for sx, sy, base_sz, freq, phase in constellations:
+    for sx0, sy0, base_sz, freq, phase in constellations:
+        # Time-lapse star-sheet sweep across the heavens
+        sx = int((sx0 + (t - 120.0) * 6.5) % WIDTH)
+        sy = int(max(28, min(HORIZON - 40, sy0 + 18.0 * math.sin((t - 120.0) * 0.025 + sx0 * 0.002))))
         # Scintillation twinkle pulse
         shimmer = 0.5 + 0.5 * math.sin(t * freq + phase)
         shimmer_slow = 0.7 + 0.3 * math.cos(t * (freq * 0.38) + phase)

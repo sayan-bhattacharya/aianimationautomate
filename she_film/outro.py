@@ -12,49 +12,77 @@ from she_film.clock import HEIGHT, WIDTH
 def _font(size, serif=False, italic=False, bold=False):
     if os.name == "nt":
         if serif and italic:
-            names = [r"C:\Windows\Fonts\georgiai.ttf"]
+            names = [r"C:\Windows\Fonts\georgiai.ttf", r"C:\Windows\Fonts\timesi.ttf"]
         elif serif:
-            names = [r"C:\Windows\Fonts\georgia.ttf"]
+            names = [r"C:\Windows\Fonts\georgia.ttf", r"C:\Windows\Fonts\times.ttf"]
         elif bold:
-            names = [r"C:\Windows\Fonts\arialbd.ttf"]
+            names = [r"C:\Windows\Fonts\arialbd.ttf", r"C:\Windows\Fonts\segoeuib.ttf"]
         else:
-            names = [r"C:\Windows\Fonts\arial.ttf"]
+            names = [r"C:\Windows\Fonts\arial.ttf", r"C:\Windows\Fonts\segoeui.ttf"]
+    elif serif and italic:
+        names = [
+            "/usr/share/fonts/truetype/liberation/LiberationSerif-Italic.ttf",
+            "/usr/share/fonts/truetype/liberation2/LiberationSerif-Italic.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Italic.ttf",
+            "/usr/share/fonts/truetype/freefont/FreeSerifItalic.ttf",
+        ]
     elif serif:
-        names = (["/usr/share/fonts/truetype/liberation2/LiberationSerif-Italic.ttf"] if italic else
-                 ["/usr/share/fonts/truetype/liberation2/LiberationSerif-Regular.ttf"])
+        names = [
+            "/usr/share/fonts/truetype/liberation/LiberationSerif-Regular.ttf",
+            "/usr/share/fonts/truetype/liberation2/LiberationSerif-Regular.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
+            "/usr/share/fonts/truetype/freefont/FreeSerif.ttf",
+        ]
+    elif bold:
+        names = [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+            "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+        ]
     else:
-        names = (["/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"] if bold else
-                 ["/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"])
+        names = [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+        ]
     for name in names:
         if os.path.exists(name):
             try:
                 return ImageFont.truetype(name, size)
             except OSError:
                 pass
-    return ImageFont.load_default()
+    try:
+        return ImageFont.load_default(size=size)
+    except Exception:
+        return ImageFont.load_default()
 
 
 def _centered(draw, y, text, font, fill, tracking=0):
     widths = [draw.textlength(ch, font=font) for ch in text]
     total = sum(widths) + tracking * max(0, len(text) - 1)
     x = (WIDTH - total) / 2.0
+    shadow = (4, 6, 12, 220)
     for ch, width in zip(text, widths):
+        draw.text((round(x) + 2, y + 2), ch, font=font, fill=shadow)
         draw.text((round(x), y), ch, font=font, fill=fill)
         x += width + tracking
 
 
 def _wordmark(draw, center_x, top):
-    # Bespoke 'She' title mark: capital S carries the word, golden serif styling
-    S = _font(240, serif=True, italic=True)
-    he = _font(170, serif=True, italic=True)
-    gold = (235, 202, 138, 255)
+    # Bespoke 'She' title mark: capital S carries the word, prominent golden serif styling
+    S = _font(280, serif=True, italic=True)
+    he = _font(200, serif=True, italic=True)
+    gold = (238, 206, 140, 255)
+    shadow = (6, 8, 16, 220)
     sw, sh = draw.textbbox((0, 0), "S", font=S)[2:]
     hw, hh = draw.textbbox((0, 0), "he", font=he)[2:]
-    gap = -8
+    gap = -10
     width = sw + gap + hw
     x = center_x - width / 2.0
+    draw.text((round(x) + 3, top + 3), "S", font=S, fill=shadow, stroke_width=0)
+    draw.text((round(x + sw + gap) + 3, top + 74), "he", font=he, fill=shadow, stroke_width=0)
     draw.text((round(x), top), "S", font=S, fill=gold, stroke_width=0)
-    draw.text((round(x + sw + gap), top + 64), "he", font=he, fill=gold, stroke_width=0)
+    draw.text((round(x + sw + gap), top + 72), "he", font=he, fill=gold, stroke_width=0)
 
 
 def _signature_rule(draw, y):
@@ -110,16 +138,17 @@ def build_outro_card(logo_path=None):
         except Exception:
             pass
 
-    # 4. Larger, aesthetically refined credits typography
-    _centered(draw, 195, "BETWEEN THE NOTES PRESENTS", _font(20, bold=True), muted, tracking=4.5)
-    _wordmark(draw, WIDTH / 2, 240)
-    _signature_rule(draw, 508)
+    # 4. Larger, highly readable editorial credits typography
+    _centered(draw, 195, "BETWEEN THE NOTES PRESENTS", _font(26, bold=True), muted, tracking=4.5)
+    _wordmark(draw, WIDTH / 2, 232)
+    _signature_rule(draw, 520)
 
-    _centered(draw, 555, "ORIGINAL MUSIC", _font(18, bold=True), gold, tracking=3.5)
-    _centered(draw, 590, "ATANDRA CHAKRABORTY", _font(34, serif=True), ivory, tracking=1.2)
-    _centered(draw, 665, "A VISUAL MUSIC FILM BY", _font(17, bold=True), gold, tracking=3.0)
-    _centered(draw, 698, "SAYAN BHATTACHARYA   |   ATANDRA CHAKRABORTY", _font(25, bold=True), ivory, tracking=0.8)
-    _centered(draw, 785, "BETWEENTHENOTES.ORG", _font(18, bold=True), gold, tracking=2.8)
-    _centered(draw, 835, "WHERE THE SILENCE SPEAKS", _font(15, bold=True), (170, 190, 195, 235), tracking=3.0)
+    _centered(draw, 558, "ORIGINAL MUSIC", _font(24, bold=True), gold, tracking=3.8)
+    _centered(draw, 598, "ATANDRA CHAKRABORTY", _font(46, serif=True), ivory, tracking=1.5)
+    _centered(draw, 678, "A VISUAL MUSIC FILM BY", _font(22, bold=True), gold, tracking=3.2)
+    _centered(draw, 716, "SAYAN BHATTACHARYA   |   ATANDRA CHAKRABORTY", _font(32, bold=True), ivory, tracking=1.0)
+    _centered(draw, 800, "BETWEENTHENOTES.ORG", _font(24, bold=True), gold, tracking=3.0)
+    _centered(draw, 850, "WHERE THE SILENCE SPEAKS", _font(20, bold=True), (185, 205, 210, 240), tracking=3.2)
 
-    return np.asarray(image).astype(np.float32)
+    # Convert RGB -> BGR to match frame.py's OpenCV BGR pipeline
+    return np.asarray(image)[:, :, ::-1].astype(np.float32)
