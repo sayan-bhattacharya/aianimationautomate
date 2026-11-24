@@ -243,6 +243,17 @@ mushroom3_target_frame = mushroom_target_frame
 MUSHROOM3_TARGET_INDEX = 2
 
 
+def _parasympathetic_swell_mod(t):
+    """Headspace-style parasympathetic exhale during the 1m53s (113.0s–121.5s) musical swell."""
+    if t < 113.0 or t > 125.0:
+        return 1.0, 1.0
+    if t < 121.5:
+        p = smooth((t - 113.0) / 8.5)
+        return 1.0 - 0.32 * p, 1.0 - 0.10 * p
+    r = smooth((t - 121.5) / 3.5)
+    return 0.68 + 0.32 * r, 0.90 + 0.10 * r
+
+
 def _get_active_mushroom_stands(plates, t):
     """
     Returns list of (scaled_frame, x, y, grow_scale, alpha_fade) for all active stands at time t.
@@ -312,8 +323,9 @@ def _get_active_mushroom_stands(plates, t):
                 raw = cv2.warpAffine(raw, M, (raw.shape[1], raw.shape[0]),
                                      borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0, 0))
 
-        tw = max(16, int(raw.shape[1] * grow_scale))
-        th = max(16, int(raw.shape[0] * grow_scale))
+        swell_h_mod, swell_w_mod = _parasympathetic_swell_mod(t)
+        tw = max(16, int(raw.shape[1] * grow_scale * swell_w_mod))
+        th = max(16, int(raw.shape[0] * grow_scale * swell_h_mod))
         scaled = cv2.resize(raw, (tw, th), interpolation=cv2.INTER_LINEAR)
 
         # Optical Depth of Field & Atmospheric Perspective (Reverse-engineered from Flow reference):
