@@ -395,9 +395,49 @@ def render(plates, t):
     )
     y0 = 280
     band = frame[y0:HORIZON]
-    for mask, color in zip(plates["ridges"], ridge_colors):
+    yy_grid = np.arange(y0, HORIZON, dtype=np.float32)[:, None]
+    xx_grid = np.arange(WIDTH, dtype=np.float32)[None, :]
+    ridge_layers = plates.get("ridge_surface_layers")
+
+    # Render sculpted 3D beach sand dunes with sunlit crest highlights and wind-rippled slopes
+    for k, (mask, base_color) in enumerate(zip(plates["ridges"], ridge_colors)):
         a = mask[y0:HORIZON, :, None]
-        band += (color - band) * a
+        if a.max() < 0.005:
+            continue
+
+        if ridge_layers is not None and k < len(ridge_layers):
+            surf_y = ridge_layers[k][None, :].astype(np.float32)
+        else:
+            surf_y = (HORIZON - 40) * np.ones((1, WIDTH), dtype=np.float32)
+
+        depth_in_dune = np.maximum(0.0, yy_grid - surf_y)
+        
+        # 1. Warm sunlit sand crest highlight along the dune rim
+        crest_highlight = np.exp(-0.5 * (depth_in_dune / 9.0) ** 2)
+        crest_light = np.array([
+            55.0 * warm + 32.0 * day + 10.0 * night,
+            34.0 * warm + 22.0 * day + 14.0 * night,
+            14.0 * warm + 12.0 * day + 24.0 * night
+        ], dtype=np.float32)
+
+        # 2. Smooth dune slope shading: graceful gradient from sunlit crest into deeper hollows
+        slope_depth = np.clip(depth_in_dune / 80.0, 0.0, 1.0)
+        hollow_shade = np.array([
+            -22.0 * warm - 16.0 * day - 8.0 * night,
+            -16.0 * warm - 12.0 * day - 6.0 * night,
+            -10.0 * warm - 6.0 * day + 4.0 * night
+        ], dtype=np.float32)
+
+        # 3. Sweeping coastal wind-sculpted sand ripples along the beach dunes
+        ripple_angle = xx_grid * 0.032 + yy_grid * 0.065 + k * 1.8
+        ripple_mod = np.sin(xx_grid * 0.008 + 1.2) * 1.4
+        sand_ripples = np.sin(ripple_angle + ripple_mod) * (0.055 * (1.0 - night * 0.45))
+
+        # Composite the 3D sculpted sand dune layer
+        dune_rgb = base_color + crest_light * crest_highlight[:, :, None] + hollow_shade * slope_depth[:, :, None]
+        dune_rgb += base_color * sand_ripples[:, :, None]
+
+        band += (dune_rgb - band) * a
 
     cover = ice(t)
     if cover > 0.01:
@@ -426,7 +466,17 @@ def render(plates, t):
     # additionally account for every nearer ridge, rather than one hard cutoff.
     y1 = HORIZON - 70
     front = plates["ridges"][-1][y1:HORIZON, :, None]
-    frame[y1:HORIZON] += (ridge_colors[-1] - frame[y1:HORIZON]) * front
+    if front.max() > 0.005:
+        surf_front = ridge_layers[-1][None, :].astype(np.float32) if ridge_layers is not None else (HORIZON - 30)
+        depth_front = np.maximum(0.0, np.arange(y1, HORIZON, dtype=np.float32)[:, None] - surf_front)
+        crest_f = np.exp(-0.5 * (depth_front / 8.0) ** 2)
+        crest_light_f = np.array([
+            50.0 * warm + 30.0 * day + 8.0 * night,
+            32.0 * warm + 20.0 * day + 12.0 * night,
+            12.0 * warm + 10.0 * day + 20.0 * night
+        ], dtype=np.float32)
+        front_rgb = ridge_colors[-1] + crest_light_f * crest_f[:, :, None]
+        frame[y1:HORIZON] += (front_rgb - frame[y1:HORIZON]) * front
     if cover > 0.01:
         land = plates["land"][y1:HORIZON, :, None]
         white = np.array([228, 234, 240], np.float32)

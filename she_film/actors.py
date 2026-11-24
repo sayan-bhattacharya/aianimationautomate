@@ -347,6 +347,14 @@ def _get_active_mushroom_stands(plates, t):
                 elif r_soil < 0:
                     scaled[:, c, 3] = 0.0
 
+        # Sand Dune Encasement: blend the warm beach sand dune tone smoothly up into the lower root flare
+        # so the mushroom organically rises out of the sand dune matrix
+        sand_encase_h = max(10, int(th * 0.16))
+        sand_up = np.linspace(0.0, 0.68, sand_encase_h, dtype=np.float32)[:, None]
+        sand_color = np.array([130.0, 146.0, 172.0], dtype=np.float32)  # warm coastal beach sand
+        stalk_mask = (scaled[th - sand_encase_h:th, :, 3:4] > 0.15).astype(np.float32)
+        scaled[th - sand_encase_h:th, :, :3] += (sand_color - scaled[th - sand_encase_h:th, :, :3]) * sand_up[:, :, None] * stalk_mask
+
         if t >= 400.0:
             # Bioluminescent celestial blue glow on returning mushrooms
             return_progress = min(1.0, max(0.0, (t - 400.0) / 12.0))
@@ -391,6 +399,27 @@ def life(frame, plates, t, alpha=1.0):
 
         # Draw firmly grounded mushroom sprite
         over(frame, spr, x, y, alpha * a_fade)
+
+        # Foreground Sand Dune Drift Lip / Sand Cradle:
+        # A natural wind-swept sand dune drift wraps in front of the root flare
+        # so the stalk is physically embedded down into and emerging up out of the sand dune!
+        lip_w = max(22, int(spr.shape[1] * 0.40))
+        lip_h = max(4, int(spr.shape[0] * 0.035))
+        lip_mask = np.zeros((lip_h * 2 + 1, lip_w * 2 + 1), dtype=np.float32)
+        cv2.ellipse(lip_mask, (lip_w, lip_h), (lip_w, lip_h), 0, 0, 180, 1.0, -1)
+        lip_mask = cv2.GaussianBlur(lip_mask, (0, 0), max(1.2, lip_h * 0.6))
+        
+        lx0 = max(0, int(x + spr.shape[1] // 2) - lip_w)
+        lx1 = min(WIDTH, int(x + spr.shape[1] // 2) + lip_w + 1)
+        ly0 = max(0, ground_y - 2)
+        ly1 = min(HORIZON, ground_y + lip_h + 1)
+        if ly1 > ly0 and lx1 > lx0:
+            patch = lip_mask[(ly0 - (ground_y - 2)):(ly1 - (ground_y - 2)),
+                             (lx0 - (int(x + spr.shape[1] // 2) - lip_w)):(lx1 - (int(x + spr.shape[1] // 2) - lip_w))]
+            sand_lip_col = np.array([135.0, 148.0, 172.0], dtype=np.float32)
+            frame_patch = frame[ly0:ly1, lx0:lx1].astype(np.float32)
+            blend_a = patch[:, :, None] * (0.82 * alpha * a_fade)
+            frame[ly0:ly1, lx0:lx1] = np.clip(frame_patch * (1.0 - blend_a) + sand_lip_col * blend_a, 0, 255).astype(np.uint8)
 
         # Ascending bioluminescent blue spores on returning mushrooms (t >= 400s)
         if t >= 400.0:
@@ -586,6 +615,24 @@ def forest(frame, plates, t, presence, decay=0.0, depth_layers=None, respect_rid
             ).astype(np.uint8)
 
         over(frame, sprite, left, top, tree_presence)
+
+        # Foreground Sand Dune Drift Collar around tree root flare
+        tree_lip_w = max(26, int(w * 0.38))
+        tree_lip_h = max(4, int(h * 0.030))
+        tree_lip_mask = np.zeros((tree_lip_h * 2 + 1, tree_lip_w * 2 + 1), dtype=np.float32)
+        cv2.ellipse(tree_lip_mask, (tree_lip_w, tree_lip_h), (tree_lip_w, tree_lip_h), 0, 0, 180, 1.0, -1)
+        tree_lip_mask = cv2.GaussianBlur(tree_lip_mask, (0, 0), max(1.2, tree_lip_h * 0.6))
+        tlx0 = max(0, int(x) - tree_lip_w)
+        tlx1 = min(WIDTH, int(x) + tree_lip_w + 1)
+        tly0 = max(0, ground_y - 2)
+        tly1 = min(HORIZON, ground_y + tree_lip_h + 1)
+        if tly1 > tly0 and tlx1 > tlx0:
+            patch = tree_lip_mask[(tly0 - (ground_y - 2)):(tly1 - (ground_y - 2)),
+                                  (tlx0 - (int(x) - tree_lip_w)):(tlx1 - (int(x) - tree_lip_w))]
+            sand_col = np.array([130.0, 144.0, 168.0], dtype=np.float32)
+            f_patch = frame[tly0:tly1, tlx0:tlx1].astype(np.float32)
+            blend_a = patch[:, :, None] * (0.80 * tree_presence)
+            frame[tly0:tly1, tlx0:tlx1] = np.clip(f_patch * (1.0 - blend_a) + sand_col * blend_a, 0, 255).astype(np.uint8)
 
 
 def forest_reflect(frame, plates, t, presence, decay=0.0, stillness=0.0):
