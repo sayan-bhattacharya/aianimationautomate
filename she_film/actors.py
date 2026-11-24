@@ -11,6 +11,7 @@ from she_film.clock import (
     HORIZON,
     WIDTH,
     crimson,
+    herd,
     lerp,
     moon,
     smooth,
@@ -553,6 +554,50 @@ def forest_emergence_alpha(t, index):
     return float(smooth(float(local)))
 
 
+def _tree_wind_and_contact(sprite, t, tree_x, tree_index, tree_depth):
+    """Apply gradual 5m52s (352s) wind-chill leaf flutter and dinosaur-brush physics.
+
+    Roots at the bottom remain pinned (displacement = 0) while upper leaves
+    flutter in the breeze and mid/lower foliage bends elastically when passing
+    dinosaurs brush against the plant (especially the leftmost stand at x=340).
+    """
+    wind_strength = smooth((t - 344.0) / 18.0) if t >= 344.0 else 0.0
+
+    # Check proximity to any dinosaur in the caravan for physical brush interaction
+    dino_push = 0.0
+    if tree_depth >= 1 and 232.0 <= t < 405.0:
+        for d_id, dx_dino in herd(t):
+            dist = dx_dino - tree_x
+            if abs(dist) < 115.0:
+                prox = smooth(1.0 - abs(dist) / 115.0)
+                # Dinosaurs march East->West (-x), pushing foliage leftward with elastic bounce
+                bounce = 1.0 + 0.25 * math.sin(t * 7.5 + d_id)
+                dino_push -= 11.0 * prox * bounce
+
+    if wind_strength < 0.005 and abs(dino_push) < 0.05:
+        return sprite
+
+    h, w = sprite.shape[:2]
+    v = np.linspace(1.0, 0.0, h, dtype=np.float32)[:, None]  # 1 at crown, 0 at root
+    # Lock the bottom 6% of rows so root grounding never shifts
+    pin = np.clip((v - 0.04) / 0.12, 0.0, 1.0)
+
+    dx_row = np.zeros((h, 1), dtype=np.float32)
+    if wind_strength >= 0.005:
+        gust = math.sin(t * 1.9 + tree_x * 0.005) + 0.45 * math.sin(t * 3.7 - tree_x * 0.008)
+        rows = np.arange(h, dtype=np.float32)[:, None]
+        leaf_flutter = np.sin(rows * 0.085 - t * 6.8 + tree_index * 1.4) * 0.42
+        dx_row += wind_strength * (6.0 * gust * (v ** 1.5) + 2.6 * leaf_flutter * (v ** 1.05)) * pin
+
+    if abs(dino_push) >= 0.05:
+        contact_profile = np.exp(-0.5 * ((v - 0.36) / 0.28) ** 2) * pin
+        dx_row += dino_push * contact_profile
+
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+    map_x = (xx - dx_row).astype(np.float32)
+    return cv2.remap(sprite, map_x, yy, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0, 0))
+
+
 def forest(frame, plates, t, presence, decay=0.0, depth_layers=None, respect_ridges=True):
     """Composite the selected whorl-firs with a soft celestial key and late-life fade."""
     if presence < 0.01:
@@ -588,6 +633,7 @@ def forest(frame, plates, t, presence, decay=0.0, depth_layers=None, respect_rid
             frame[y0:y1, x0:x1] += (tint - frame[y0:y1, x0:x1]) * src
 
         sprite = spr.copy()
+        sprite = _tree_wind_and_contact(sprite, t, x, index, depth)
         if index == 0:
             # Subtle portrait depth-of-field blur on nearest foreground tree with large angular diameter
             sprite[:, :, :3] = cv2.GaussianBlur(sprite[:, :, :3], (5, 5), 1.25)
@@ -684,8 +730,9 @@ def forest_reflect(frame, plates, t, presence, decay=0.0, stillness=0.0):
         tree_presence = (tree_alpha * FOREST_DEPTH_VISIBILITY[index]
                          * FOREST_REFLECTION_VISIBILITY[index])
         h, w = spr.shape[:2]
+        ref_src = _tree_wind_and_contact(spr.copy(), t, x, index, FOREST_GROUND_LAYERS[index])
         ref_h = max(6, int(h * FOREST_REFLECTION_HEIGHT[index]))
-        reflected = cv2.resize(spr[::-1], (w, ref_h), interpolation=cv2.INTER_LINEAR).copy()
+        reflected = cv2.resize(ref_src[::-1], (w, ref_h), interpolation=cv2.INTER_LINEAR).copy()
         fade = np.linspace(0.36, 0.0, ref_h, dtype=np.float32)[:, None]
         reflected[:, :, 3] *= fade * (1.0 - decay * 0.55)
         reflected[:, :, 0] *= 1.0 + warm * 0.08
