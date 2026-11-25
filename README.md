@@ -1,23 +1,25 @@
-# 🎬 SHE: Full-Song 1080p Film Master Render Pipeline
+# SHE Full-Song Film Render Pipeline
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/sayan-bhattacharya/aianimationautomate/blob/main/SHE_Full_Song_Master_Render_Colab.ipynb)
+SHE is the ambient music-film project in this repository. It is separate from the NOIR project and does not share its code, assets, or render workflow.
 
-Autonomous computer-vision & procedural VFX pipeline for the full-length music film **"SHE"** (7:29 | 10,777 frames @ 24fps | 1080p).
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/sayan-bhattacharya/aianimationautomate/blob/main/SHE_Full_Song_Master_Render_Colab.ipynb)
 
----
+## Current render target
 
-## 🚀 One-Click Google Colab Render
+- Runtime: **7:25**, 10,680 frames at 24 fps
+- Master: **1920?1080**, H.264 video with 320 kb/s AAC audio
+- Render flow: 10 sequential chunks, with Google Drive checkpoints when Drive is mounted
+- Teaser: 50 seconds, 1920?1080 landscape at 30 fps
+- Current handoff: [revision notes](SHE_RENDER_REVISION_NOTES.md), [end-of-day critical review](SHE_END_OF_DAY_REVIEW_2026-11-25.md)
 
-Click the badge above or navigate to:
-**[Open in Google Colab](https://colab.research.google.com/github/sayan-bhattacharya/aianimationautomate/blob/main/SHE_Full_Song_Master_Render_Colab.ipynb)**
+The notebook clones SHE code, assets, audio, and audio features from this repository's `main` branch. Colab resource availability and execution time vary by account/runtime. The renderer uses CPU-side frame generation and ffmpeg encoding; having a GPU visible does not mean the render is GPU-accelerated.
 
-Works on any Google account (including free, Pro, GPU, or TPU runtimes) with zero authentication required.
+## Visual revision represented in the current notebook
 
-### Pipeline Highlights
-1. **Zero-Defect Visual Gatekeeper**: Automated pre-render audit verifying all 7 film segments, reflections, and camera transitions before rendering begins.
-2. **True Perspective Telemetry Suite (2-Screen Buddha Redesign)**:
-   - **Screen A (Left Wall)**: *Between The Notes* Logo (3s) → Dinosaur Caravan March (19s)
-   - **Screen B (Right Wall)**: Cheetah Sprint (5s) → Romcom in Rain (5s) → 90s Commercial (6s) → Analog White Noise with CRT sync bar (6s)
-   - Calibrated planar homography (`cv2.warpPerspective`) with chromatic aberration, CRT vignette, and phosphor bloom.
-   - 100% clean, verified mushroom botanical canopy with all blue spore artifacts removed.
-3. **Multi-Process Accelerated Chunking**: Splits the 10,777 frames across CPU/GPU workers with idempotent caching and automatic ffmpeg loss-free audio muxing.
+The late Buddha/studio passage contains four moving CRT feeds. The first/left feed shows a painterly dinosaur aerial; the middle feeds show related dinosaur views; the far-right feed uses subdued analog noise. The 7:05 review point checks that arrangement, and the closing credits include `.STORE` around 7:21. Tree motion is slow and restrained; the dinosaur procession remains distant in the landscape.
+
+## Automated checks and their limits
+
+The pre-render gate passed 34 code/asset checks for the current revision, including mushroom grounding and timing, water restraint, dinosaur continuity, four moving CRT feeds, and the 7:25 runtime. This is a pre-render code gate, not a visual quality certificate. The notebook's final output check covers frame count, duration, resolution, and audio stream presence; it does not yet certify sync, freezes, black frames, loudness, or artistic quality. Inspect and listen to the rendered master before release.
+
+Final video files are generated in Colab/Drive and are not stored in Git.
