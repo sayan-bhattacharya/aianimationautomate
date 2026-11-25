@@ -707,10 +707,18 @@ def forest(frame, plates, t, presence, decay=0.0, depth_layers=None, respect_rid
         depth = FOREST_GROUND_LAYERS[index]
         if depth_layers is not None and depth not in depth_layers:
             continue
-        # Reveal one complete silhouette at a time, rear-to-front, instead of
-        # exposing every tree as a transparent full-height ghost.
-        opacity = forest_emergence_alpha(t, index) if growing else presence
+        # Soil-emergence & soil-decay lifecycle (no ghost fade-in/fade-out):
+        # Trees physically push upward out of the sand during FIR_EMERGENCE,
+        # and droop/sink back into the dune collar during decay.
+        emerge_p = forest_emergence_alpha(t, index) if growing else 1.0
+        if growing and emerge_p < 0.01:
+            continue
+        opacity = min(1.0, emerge_p * 3.5) if growing else presence
+        if decay > 0.001:
+            opacity *= 1.0 - smooth((decay - 0.75) / 0.25)
         tree_presence = opacity * FOREST_DEPTH_VISIBILITY[index]
+        if tree_presence < 0.01:
+            continue
         h, w = spr.shape[:2]
         ground_y = forest_ground_y(plates, index)
         # A dim, directionally offset ground shadow ties each cutout to the active lamp.
@@ -742,16 +750,32 @@ def forest(frame, plates, t, presence, decay=0.0, depth_layers=None, respect_rid
         sprite[:, :, 1] *= 1.0 + warmth * 0.22
         sprite[:, :, 2] *= 1.0 - warmth * 0.30 + cool
         if decay > 0.001:
-            # Slow crown-first desaturation and dissolution, rather than a uniform pop-out.
+            # Wither inward & desaturate to autumn-earth tones as it sinks into soil
             rows = np.linspace(0.35, 1.0, h, dtype=np.float32)[:, None]
-            sprite[:, :, 3] *= 1.0 - decay * rows * 0.78
+            sprite[:, :, 3] *= 1.0 - decay * rows * 0.55
             leaf = np.array([108.0, 94.0, 75.0], np.float32)
-            sprite[:, :, :3] += (leaf - sprite[:, :, :3]) * decay * 0.62
+            sprite[:, :, :3] += (leaf - sprite[:, :, :3]) * decay * 0.68
         # Align the source concept's five-tree rhythm to the established mushroom anchors.
         root_rows = plates.get("forest_root_rows", ())
         root_row = root_rows[index] if index < len(root_rows) else h
+        # Physical soil emergence (upward) & decay (downward into soil)
+        soil_offset = 0
+        if growing:
+            swell_boost = _drone_swell_strength(plates.get("audio_feats"), t) * 0.05
+            ep = float(np.clip(emerge_p + swell_boost, 0.0, 1.0))
+            soil_offset = int((1.0 - ep) * root_row * 0.88)
+            unfurl_w = max(8, int(w * (0.70 + 0.30 * ep)))
+            if unfurl_w != w:
+                sprite = cv2.resize(sprite, (unfurl_w, h), interpolation=cv2.INTER_LINEAR)
+                w = unfurl_w
+        elif decay > 0.001:
+            soil_offset = int(decay * root_row * 0.62)
+            wither_w = max(8, int(w * (1.0 - 0.22 * decay)))
+            if wither_w != w:
+                sprite = cv2.resize(sprite, (wither_w, h), interpolation=cv2.INTER_LINEAR)
+                w = wither_w
         # Seat root base 5px into the soil so root spurs firmly penetrate the beach sand
-        left, top = int(x - w / 2), ground_y - root_row + 5
+        left, top = int(x - w / 2), ground_y - root_row + 5 + soil_offset
 
         # Seamless Root Integration into Beach Soil:
         # Mask each column of the root flare to conform to the local ridge dune contour
@@ -824,15 +848,24 @@ def forest_reflect(frame, plates, t, presence, decay=0.0, stillness=0.0):
     day, warm, night = sky_weights(t)
     for index, (spr, x) in enumerate(zip(plates.get("forest", ()), FOREST_ANCHORS)):
         growing = decay < 0.001 and FIR_EMERGENCE_START <= t < FIR_EMERGENCE_END
-        tree_alpha = forest_emergence_alpha(t, index) if growing else presence
+        emerge_p = forest_emergence_alpha(t, index) if growing else 1.0
+        if growing and emerge_p < 0.01:
+            continue
+        tree_alpha = min(1.0, emerge_p * 3.5) if growing else presence
+        if decay > 0.001:
+            tree_alpha *= 1.0 - smooth((decay - 0.75) / 0.25)
         tree_presence = (tree_alpha * FOREST_DEPTH_VISIBILITY[index]
                          * FOREST_REFLECTION_VISIBILITY[index])
+        if tree_presence < 0.01:
+            continue
         h, w = spr.shape[:2]
         ref_src = _tree_wind_and_contact(spr.copy(), t, x, index, FOREST_GROUND_LAYERS[index])
-        ref_h = max(6, int(h * FOREST_REFLECTION_HEIGHT[index]))
-        reflected = cv2.resize(ref_src[::-1], (w, ref_h), interpolation=cv2.INTER_LINEAR).copy()
+        ref_scale = emerge_p if growing else max(0.25, 1.0 - 0.62 * decay)
+        ref_h = max(6, int(h * FOREST_REFLECTION_HEIGHT[index] * ref_scale))
+        ref_w = max(8, int(w * (0.70 + 0.30 * emerge_p if growing else 1.0 - 0.22 * decay)))
+        reflected = cv2.resize(ref_src[::-1], (ref_w, ref_h), interpolation=cv2.INTER_LINEAR).copy()
         fade = np.linspace(0.36, 0.0, ref_h, dtype=np.float32)[:, None]
-        reflected[:, :, 3] *= fade * (1.0 - decay * 0.55)
+        reflected[:, :, 3] *= fade * (1.0 - decay * 0.45)
         reflected[:, :, 0] *= 1.0 + warm * 0.08
         reflected[:, :, 2] *= 1.0 + night * 0.06
         parallax = 1.35 if index in (0, 1) else (1.0 if index == 2 else 0.70)
@@ -841,7 +874,7 @@ def forest_reflect(frame, plates, t, presence, decay=0.0, stillness=0.0):
         )
         speed_factor = max(0.12, wave_factor)
         wobble = int(math.sin(t * (1.8 * speed_factor + 0.2) - (x - 340.0) * 0.006) * 5.0 * wave_factor * parallax)
-        over(frame, reflected, x - w / 2 + wobble, HORIZON + 2, tree_presence)
+        over(frame, reflected, x - ref_w / 2 + wobble, HORIZON + 2, tree_presence)
 
 
 def solid(frame, t, lamp, alpha):
