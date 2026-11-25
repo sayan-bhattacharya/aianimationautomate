@@ -394,49 +394,53 @@ def _get_active_mushroom_stands(plates, t):
         # Delay propagates from leftmost stand (x=340) to rightmost stand (x=1540)
         wave_delay = (x - 340.0) / 380.0
         
-        if 166.0 <= t <= 176.0:
-            # Physically retract/wither into the soil using Flow mushroom decay clip
-            retract_p = smooth((t - 166.0) / 10.0)
-            vs_decay = plates.get("flow_mushroom_decay_v2")
-            if vs_decay is not None:
-                raw = vs_decay.get_frame(8.0 * retract_p, loop=False)
-            else:
-                raw = vs_growth.get_frame(MUSHROOM_GROWTH_SECONDS * (1.0 - retract_p), loop=False)
-            a_fade = 1.0 - smooth((t - 174.5) / 1.5)
-        elif 400.0 <= t <= 416.0:
-            # Returning bioluminescent mushrooms sprout organically out of the soil via Flow sprout clip
-            sprout_p = smooth((t - 400.0) / 12.0)
-            vs_sprout = plates.get("flow_mushroom_sprout_v2")
-            if vs_sprout is not None:
-                raw = vs_sprout.get_frame(8.0 * sprout_p, loop=False)
-            else:
-                raw = vs_growth.get_frame(MUSHROOM_GROWTH_SECONDS * sprout_p, loop=False)
-            a_fade = min(1.0, sprout_p * 3.0)
-        elif stand_index == 1:
-            raw, decay_scale = mushroom2_lifecycle_frame(plates, age)
+        if stand_index == 1:
+            base_raw, decay_scale = mushroom2_lifecycle_frame(plates, age)
             grow_scale *= decay_scale
-            # User feedback: Depth in Z direction should NOT just be translucency/opacity reduction.
-            # Keep opacity solid (0.94) and apply depth-of-field Gaussian blur with subtle dithering.
-            a_fade = min(0.96, max(0.85, age / 0.8))
+            base_fade = min(0.96, max(0.85, age / 0.8))
         elif age < MUSHROOM_GROWTH_SECONDS:
-            raw = (mushroom_target_frame(vs_growth, age)
-                   if stand_index in MUSHROOM_HOLD_INDICES
-                   else vs_growth.get_frame(age, loop=False))
-            a_fade = min(1.0, age / 0.8)
+            base_raw = (mushroom_target_frame(vs_growth, age)
+                        if stand_index in MUSHROOM_HOLD_INDICES
+                        else vs_growth.get_frame(age, loop=False))
+            base_fade = min(1.0, age / 0.8)
         elif stand_index in MUSHROOM_HOLD_INDICES:
-            # Stand 2 and Stand 3 (4th mushroom) resolve to the exact terminal mature frame
-            # from Mushroom Growth Scene 1 and remain held permanently at full size with
-            # continuous reflection integration, never shrinking back into a sprout.
-            raw = mushroom_target_frame(vs_growth, age)
-            a_fade = 1.0
+            base_raw = mushroom_target_frame(vs_growth, age)
+            base_fade = 1.0
         else:
-            # Minimized frequency (0.45x) and neighbor wave phase delay
-            # Ping-pong the Flow life-cycle plate: mature -> gradual decay ->
-            # small -> regrowth. It never wraps mature directly to a sprout.
             phase = (8.0 - wave_delay + max(0.0, age - 8.0) * 0.45) % 16.0
             idle_t = phase if phase <= 8.0 else 16.0 - phase
-            raw = vs_idle.get_frame(idle_t, loop=False)
-            a_fade = 1.0
+            base_raw = vs_idle.get_frame(idle_t, loop=False)
+            base_fade = 1.0
+
+        if 166.0 <= t <= 176.0:
+            # Smoothly cross-dissolve from mature pose into Flow mushroom decay clip
+            retract_p = smooth((t - 166.0) / 10.0)
+            vs_decay = plates.get("flow_mushroom_decay_v2")
+            d_raw = (vs_decay.get_frame(8.0 * retract_p, loop=False)
+                     if vs_decay is not None
+                     else vs_growth.get_frame(MUSHROOM_GROWTH_SECONDS * (1.0 - retract_p), loop=False))
+            if base_raw is not None and d_raw is not None and t < 167.2:
+                b_in = smooth((t - 166.0) / 1.2)
+                raw = base_raw * (1.0 - b_in) + cv2.resize(d_raw, (base_raw.shape[1], base_raw.shape[0])) * b_in
+            else:
+                raw = d_raw
+            a_fade = base_fade * (1.0 - smooth((t - 174.5) / 1.5))
+        elif 400.0 <= t <= 416.0:
+            # Returning bioluminescent mushrooms sprout via Flow clip, then dissolve into idle/hold
+            sprout_p = smooth((t - 400.0) / 12.0)
+            vs_sprout = plates.get("flow_mushroom_sprout_v2")
+            s_raw = (vs_sprout.get_frame(8.0 * sprout_p, loop=False)
+                     if vs_sprout is not None
+                     else vs_growth.get_frame(MUSHROOM_GROWTH_SECONDS * sprout_p, loop=False))
+            if base_raw is not None and s_raw is not None and t > 414.5:
+                b_out = smooth((t - 414.5) / 1.5)
+                raw = cv2.resize(s_raw, (base_raw.shape[1], base_raw.shape[0])) * (1.0 - b_out) + base_raw * b_out
+            else:
+                raw = s_raw
+            a_fade = min(1.0, sprout_p * 3.0)
+        else:
+            raw = base_raw
+            a_fade = base_fade
 
         if raw is None:
             continue
@@ -795,7 +799,7 @@ def forest(frame, plates, t, presence, decay=0.0, depth_layers=None, respect_rid
         root_row = root_rows[index] if index < len(root_rows) else h
         # Physical soil emergence (upward) & decay (downward into soil)
         soil_offset = 0
-        if growing:
+        if growing and vs_pine_sprout is None:
             swell_boost = _drone_swell_strength(plates.get("audio_feats"), t) * 0.05
             ep = float(np.clip(emerge_p + swell_boost, 0.0, 1.0))
             soil_offset = int((1.0 - ep) * root_row * 0.88)
@@ -803,7 +807,7 @@ def forest(frame, plates, t, presence, decay=0.0, depth_layers=None, respect_rid
             if unfurl_w != w:
                 sprite = cv2.resize(sprite, (unfurl_w, h), interpolation=cv2.INTER_LINEAR)
                 w = unfurl_w
-        elif decay > 0.001:
+        elif decay > 0.001 and vs_pine_decay is None:
             soil_offset = int(decay * root_row * 0.62)
             wither_w = max(8, int(w * (1.0 - 0.22 * decay)))
             if wither_w != w:
