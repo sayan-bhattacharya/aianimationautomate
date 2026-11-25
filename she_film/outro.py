@@ -150,5 +150,4 @@ def build_outro_card(logo_path=None):
     _centered(draw, 800, "BETWEENTHENOTES.ORG", _font(24, bold=True), gold, tracking=3.0)
     _centered(draw, 850, "WHERE THE SILENCE SPEAKS", _font(20, bold=True), (185, 205, 210, 240), tracking=3.2)
 
-    # Convert RGB -> BGR to match frame.py's OpenCV BGR pipeline
-    return np.asarray(image)[:, :, ::-1].astype(np.float32)
+    return np.asarray(image).astype(np.float32)
