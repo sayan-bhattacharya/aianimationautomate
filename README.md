@@ -20,6 +20,11 @@ The late Buddha/studio passage contains four moving CRT feeds. The first/left fe
 
 ## Automated checks and their limits
 
-The pre-render gate passed 34 code/asset checks for the scene revision, including mushroom grounding and timing, water restraint, dinosaur continuity, four moving CRT feeds, and the 7:25 runtime. It is not a visual quality certificate. The notebook now isolates checkpoints by a Git fingerprint of SHE code, assets, audio, audio features, and the notebook, reuses chunks only when the manifest, SHA-256, exact frame count, dimensions, codec, and frame rate match, and gates download on the final technical review. The final review also checks full-file decoding and audio/video stream duration alignment. Freeze/black-frame quality, loudness, fine sync, and artistic quality still need more checks and human review. Inspect and listen to the rendered master before release.
+The pre-render gate passed 34 code/asset checks for the scene revision, including mushroom grounding and timing, water restraint, dinosaur continuity, four moving CRT feeds, and the 7:25 runtime. It is not a visual quality certificate. The notebook isolates checkpoints by a stable render fingerprint of SHE code, assets, audio, audio features, and explicit render settings (not the notebook file), reuses chunks only when the manifest, SHA-256, exact frame count, dimensions, codec, and frame rate match, and gates download on the final technical review. The final review also checks full-file decoding and audio/video stream duration alignment. Freeze/black-frame quality, loudness, fine sync, and artistic quality still need more checks and human review. Inspect and listen to the rendered master before release.
 
 Final video files are generated in Colab/Drive and are not stored in Git.
+
+
+## Repository boundary
+
+This repository contains SHE only. NOIR lives in its separate `noir-analog-horror` repository. The local `drone_animation_project/` folder in the broader workspace is an older archive, not a source for this renderer.
