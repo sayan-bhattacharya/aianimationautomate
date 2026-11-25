@@ -38,22 +38,22 @@ def crystal_nocturne(frame, t, intensity_override=None):
     contrast = 1.0 + 0.11 * k
     img = (img - 128.0) * contrast + 128.0 + black_lift
 
-    # 2. Split-tone: teal/cyan in shadows, warm amber in highlights + gentle warm temp (+6..+10)
-    lum = np.clip((0.114 * img[:, :, 0] + 0.587 * img[:, :, 1] + 0.299 * img[:, :, 2]) / 255.0, 0.0, 1.0)
+    # 2. Split-tone: teal/cyan in shadows, warm amber in highlights + gentle warm temp (RGB order)
+    lum = np.clip((0.299 * img[:, :, 0] + 0.587 * img[:, :, 1] + 0.114 * img[:, :, 2]) / 255.0, 0.0, 1.0)
     shadow_w = ((1.0 - lum) ** 1.6)[:, :, None]
     hi_w = (lum ** 1.5)[:, :, None]
 
-    # BGR offsets
-    teal_shadows = np.array([10.5, 6.0, -8.0], dtype=np.float32) * k
-    amber_highlights = np.array([-7.5, 3.0, 11.0], dtype=np.float32) * k
-    warm_temp = np.array([-2.5, 1.0, 4.5], dtype=np.float32) * k
+    # RGB offsets
+    teal_shadows = np.array([-8.0, 6.0, 10.5], dtype=np.float32) * k
+    amber_highlights = np.array([11.0, 3.0, -7.5], dtype=np.float32) * k
+    warm_temp = np.array([4.5, 1.0, -2.5], dtype=np.float32) * k
 
     img += shadow_w * teal_shadows + hi_w * amber_highlights + warm_temp
 
     # 3. Selective teal/orange saturation (+10..+18%) with restrained global saturation (+3%)
-    gray = (0.114 * img[:, :, 0] + 0.587 * img[:, :, 1] + 0.299 * img[:, :, 2])[:, :, None]
-    cool_mask = np.clip((img[:, :, 0:1] - img[:, :, 2:3]) / 45.0, 0.0, 1.0)
-    warm_mask = np.clip((img[:, :, 2:3] - img[:, :, 0:1]) / 45.0, 0.0, 1.0)
+    gray = (0.299 * img[:, :, 0] + 0.587 * img[:, :, 1] + 0.114 * img[:, :, 2])[:, :, None]
+    cool_mask = np.clip((img[:, :, 2:3] - img[:, :, 0:1]) / 45.0, 0.0, 1.0)
+    warm_mask = np.clip((img[:, :, 0:1] - img[:, :, 2:3]) / 45.0, 0.0, 1.0)
     sat_boost = 1.0 + (0.03 + 0.14 * cool_mask + 0.11 * warm_mask) * k
     img = gray + (img - gray) * sat_boost
 
