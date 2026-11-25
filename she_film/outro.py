@@ -61,7 +61,7 @@ def _centered(draw, y, text, font, fill, tracking=0):
     widths = [draw.textlength(ch, font=font) for ch in text]
     total = sum(widths) + tracking * max(0, len(text) - 1)
     x = (WIDTH - total) / 2.0
-    shadow = (4, 6, 12, 220)
+    shadow = (12, 8, 6, 220)
     for ch, width in zip(text, widths):
         draw.text((round(x) + 2, y + 2), ch, font=font, fill=shadow)
         draw.text((round(x), y), ch, font=font, fill=fill)
@@ -72,8 +72,8 @@ def _wordmark(draw, center_x, top):
     # Bespoke 'She' title mark: capital S carries the word, prominent golden serif styling
     S = _font(280, serif=True, italic=True)
     he = _font(200, serif=True, italic=True)
-    gold = (238, 206, 140, 255)
-    shadow = (6, 8, 16, 220)
+    gold = (242, 202, 126, 255)
+    shadow = (12, 8, 6, 220)
     sw, sh = draw.textbbox((0, 0), "S", font=S)[2:]
     hw, hh = draw.textbbox((0, 0), "he", font=he)[2:]
     gap = -10
@@ -97,11 +97,11 @@ def build_outro_card(logo_path=None):
     prominent 'She' emblem, and larger editorial typography."""
     yy, xx = np.mgrid[0:HEIGHT, 0:WIDTH].astype(np.float32)
 
-    # 1. Base deep velvety indigo/black background
+    # 1. Base deep warm obsidian/umber background (no blue tint)
     rgb = np.zeros((HEIGHT, WIDTH, 3), dtype=np.float32)
-    rgb[:, :, 0] = 8.0
+    rgb[:, :, 0] = 16.0
     rgb[:, :, 1] = 12.0
-    rgb[:, :, 2] = 20.0
+    rgb[:, :, 2] = 10.0
 
     # 2. Realistic top-down conical light beam (volumetric light cone originating from top center)
     cone_apex_x, cone_apex_y = WIDTH / 2.0, -30.0
@@ -116,17 +116,17 @@ def build_outro_card(logo_path=None):
     ray_streaks = 1.0 + 0.12 * np.sin(np.arctan2(xx - cone_apex_x, dy) * 28.0)
     conical_beam = (cone_mask * vert_falloff * ray_streaks)[:, :, None]
 
-    # Warm starlight beam color: soft champagne gold / radiant amber
-    beam_color = np.array([215.0, 235.0, 255.0], dtype=np.float32)
+    # Warm starlight beam color in RGB: soft champagne gold / radiant amber
+    beam_color = np.array([255.0, 224.0, 165.0], dtype=np.float32)
     rgb += conical_beam * beam_color * 0.28
     rgb = np.clip(rgb, 0, 255).astype(np.uint8)
 
     image = Image.fromarray(rgb)
     draw = ImageDraw.Draw(image, "RGBA")
 
-    muted = (175, 195, 202, 240)
-    gold = (235, 204, 142, 255)
-    ivory = (248, 244, 236, 255)
+    muted = (218, 198, 164, 245)
+    gold = (242, 202, 126, 255)
+    ivory = (252, 242, 224, 255)
 
     # 3. Prominent stylish "She" emblem / logo at top under the spotlight
     if logo_path and os.path.exists(logo_path):
@@ -148,6 +148,6 @@ def build_outro_card(logo_path=None):
     _centered(draw, 678, "A VISUAL MUSIC FILM BY", _font(22, bold=True), gold, tracking=3.2)
     _centered(draw, 716, "SAYAN BHATTACHARYA   |   ATANDRA CHAKRABORTY", _font(32, bold=True), ivory, tracking=1.0)
     _centered(draw, 800, "BETWEENTHENOTES.ORG", _font(24, bold=True), gold, tracking=3.0)
-    _centered(draw, 850, "WHERE THE SILENCE SPEAKS", _font(20, bold=True), (185, 205, 210, 240), tracking=3.2)
+    _centered(draw, 850, "WHERE THE SILENCE SPEAKS", _font(20, bold=True), muted, tracking=3.2)
 
     return np.asarray(image).astype(np.float32)

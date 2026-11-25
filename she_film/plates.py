@@ -117,9 +117,9 @@ def _font(size, light=True):
 def _title_cards():
     """Each line is its own plate. The rule is a separate plate so it can lead."""
     specs = [
-        ("BETWEEN  THE  NOTES  PRESENTS", 26, (20, 72, 84, 255), (186, 72, 52, 255), 188, True),
-        ("S    H    E", 96, (255, 252, 246, 255), None, 268, False),
-        ("A FILM SET TO THE COMPOSITION BY DRONE WATCH", 24, (28, 24, 20, 255), (20, 72, 84, 210), 352, True),
+        ("BETWEEN  THE  NOTES  PRESENTS", 26, (138, 42, 28, 255), (186, 72, 52, 255), 188, True),
+        ("S    H    E", 96, (255, 244, 218, 255), None, 268, False),
+        ("A FILM SET TO THE COMPOSITION BY DRONE WATCH", 24, (36, 24, 18, 255), (168, 64, 42, 210), 352, True),
         ("ORIGINAL SOUND    ATANDRA CHAKRABORTY (BURO)", 22, (28, 24, 20, 255), None, 408, False),
         ("CINEMA  AND  DIRECTION    SAYAN BHATTACHARYA", 22, (28, 24, 20, 255), None, 442, False),
         ("VIDEO PRODUCED BY SAYAN BHATTACHARYA", 22, (28, 24, 20, 255), None, 476, False),
