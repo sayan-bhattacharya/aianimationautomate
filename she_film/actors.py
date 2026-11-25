@@ -657,7 +657,9 @@ def _tree_wind_and_contact(sprite, t, tree_x, tree_index, tree_depth):
     flutter in the breeze and mid/lower foliage bends elastically when passing
     dinosaurs brush against the plant (especially the leftmost stand at x=340).
     """
-    wind_strength = smooth((t - 344.0) / 18.0) if t >= 344.0 else 0.0
+    # Keep the 3rd (middle, index=2) pine tree completely still in the wind
+    # where the Buddha face appears in the transition.
+    wind_strength = 0.0 if tree_index == 2 else (smooth((t - 344.0) / 18.0) if t >= 344.0 else 0.0)
 
     # Check proximity to any dinosaur in the caravan for physical brush interaction
     dino_push = 0.0
