@@ -52,12 +52,12 @@ def run_pre_render_code_review():
     else:
         record_fail("S1.1", "Sun altitude during sunrise", f"s_19={s_19}")
 
-    # Verify right-side credits stack artifact is zero at t=19.0s (in frame.py)
+    # The old stripe artifact was removed rather than faded out later.
     frame_src = open(frame.__file__, encoding="utf-8").read()
-    if "if t < 14.0:" in frame_src and "stripe_fade" in frame_src:
-        record_pass("S1.2", "Right-hand credits stack artifact strictly eliminated by t=14.0s", "stripe_cutoff=14.0s")
+    if 'actors.over(frame, stripes' not in frame_src and 'plates["stripes"]' not in frame_src:
+        record_pass("S1.2", "Opening stripe overlay removed for a clean sunrise", "no stripe composite in frame.py")
     else:
-        record_fail("S1.2", "Credits stack artifact persisting", "stripes not cut off at t=14.0s in frame.py")
+        record_fail("S1.2", "Opening stripe overlay still present", "remove the stripe composite from frame.py")
 
     # A previous Colab session/repository copy can leave an older
     # screens_90s.npz in place. Rebuild it before plates.load() so the reviewer

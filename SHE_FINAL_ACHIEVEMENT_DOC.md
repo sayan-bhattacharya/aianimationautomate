@@ -3,8 +3,8 @@
 **Runtime:** `445.0s` (`7:25`) | **Frame Rate:** `24 fps` (`10,680` frames) | **Master Resolution:** `1920 × 1080`  
 **Soundtrack:** `She.wav` (`audio_features_24fps.npy`, 10-band 24fps audio matrix)  
 **Repositories:**
-- Film Render Repo: `sayan-bhattacharya/aianimationautomate` (`codex/grounded-mushroom-colab` & `main`)
-- Workspace Repo: `sayan-bhattacharya/between-the-notes` (`main`)
+- Canonical SHE repository and Colab source: `sayan-bhattacharya/aianimationautomate` (`main`)
+- Project boundary: SHE is independent of the separate NOIR film repository; no NOIR code, assets, or render steps are part of this pipeline.
 
 ---
 

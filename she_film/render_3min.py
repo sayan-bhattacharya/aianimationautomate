@@ -184,6 +184,25 @@ def render_movie():
     stitch_movie(enable_4k=("--4k" in sys.argv))
 
 
+def upscale_master(resolution):
+    """Create an upscaled delivery from the 1080p master without rerendering scenes."""
+    dimensions = {"4k": (3840, 2160), "8k": (7680, 4320)}
+    if resolution not in dimensions:
+        raise ValueError(f"Unsupported upscale target: {resolution}")
+    width, height = dimensions[resolution]
+    output = os.path.join(ROOT, f"she_full_song_master_{resolution}.mp4")
+    print(f"Upscaling 1080p master to {resolution.upper()} ({width}x{height}) with Lanczos + restrained sharpening on CPU...", flush=True)
+    cmd = [
+        "ffmpeg", "-y", "-i", OUTPUT,
+        "-vf", f"scale={width}:{height}:flags=lanczos,unsharp=5:5:0.25:5:5:0.0",
+        "-c:v", "libx264", "-preset", "fast", "-crf", "17", "-pix_fmt", "yuv420p",
+        "-c:a", "copy", "-movflags", "+faststart", output,
+    ]
+    subprocess.check_call(cmd)
+    print(f"[SUCCESS] {resolution.upper()} upscale: {output}  {os.path.getsize(output) / 1024 / 1024:.1f} MB", flush=True)
+    return output
+
+
 def stitch_movie(enable_4k=False):
     cache = os.path.join(ROOT, "she_film", "cache")
     chunk_seconds = 45
@@ -218,29 +237,10 @@ def stitch_movie(enable_4k=False):
     subprocess.check_call(cmd)
     print(f"[SUCCESS] 1080p Master: {OUTPUT}  {DURATION:.3f}s  {os.path.getsize(OUTPUT) / 1024 / 1024:.1f} MB", flush=True)
 
-    # 4K Ultra HD Cinema Master (3840x2160 Lanczos High Bitrate)
-    output_4k = os.path.join(ROOT, "she_full_song_master_4k.mp4")
     if enable_4k or "--4k" in sys.argv:
-        nvenc = _has_nvenc()
-        print(f"Rendering 4K Ultra HD Master (3840x2160, {'GPU NVENC' if nvenc else 'CPU Fast'})...", flush=True)
-        if nvenc:
-            cmd_4k = [
-                "ffmpeg", "-y", "-i", OUTPUT,
-                "-vf", "scale=3840:2160:flags=lanczos",
-                "-c:v", "h264_nvenc", "-preset", "p4", "-cq", "18", "-b:v", "35M", "-maxrate", "50M",
-                "-c:a", "copy",
-                output_4k,
-            ]
-        else:
-            cmd_4k = [
-                "ffmpeg", "-y", "-i", OUTPUT,
-                "-vf", "scale=3840:2160:flags=bicubic",
-                "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
-                "-c:a", "copy",
-                output_4k,
-            ]
-        subprocess.check_call(cmd_4k)
-        print(f"[SUCCESS] 4K UHD Master: {output_4k}  {os.path.getsize(output_4k) / 1024 / 1024:.1f} MB", flush=True)
+        upscale_master("4k")
+    if "--8k" in sys.argv:
+        upscale_master("8k")
     return True
 
 
@@ -251,6 +251,13 @@ def main():
         return
     if "--stitch" in sys.argv:
         stitch_movie(enable_4k=("--4k" in sys.argv))
+        return
+    if "--upscale-only" in sys.argv:
+        targets = [target for target in ("4k", "8k") if f"--{target}" in sys.argv]
+        if not targets:
+            raise SystemExit("Choose --4k or --8k with --upscale-only")
+        for target in targets:
+            upscale_master(target)
         return
     audit()
     if "--stills" in sys.argv:

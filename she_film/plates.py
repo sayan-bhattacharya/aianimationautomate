@@ -115,31 +115,34 @@ def _font(size, light=True):
 
 
 def _title_cards():
-    """Each line is its own plate. The rule is a separate plate so it can lead."""
+    """Create individually timed, supersampled title plates with a quiet shadow edge."""
     specs = [
-        ("BETWEEN  THE  NOTES  PRESENTS", 26, (138, 42, 28, 255), (186, 72, 52, 255), 188, True),
+        ("BETWEEN  THE  NOTES  PRESENTS", 26, (244, 224, 190, 255), (228, 185, 129, 220), 188, True),
         ("S    H    E", 96, (255, 244, 218, 255), None, 268, False),
-        ("A FILM SET TO THE COMPOSITION BY DRONE WATCH", 24, (36, 24, 18, 255), (168, 64, 42, 210), 352, True),
-        ("ORIGINAL SOUND    ATANDRA CHAKRABORTY (BURO)", 22, (28, 24, 20, 255), None, 408, False),
-        ("CINEMA  AND  DIRECTION    SAYAN BHATTACHARYA", 22, (28, 24, 20, 255), None, 442, False),
-        ("VIDEO PRODUCED BY SAYAN BHATTACHARYA", 22, (28, 24, 20, 255), None, 476, False),
+        ("COMPOSITION BY DRONE WATCH", 24, (247, 235, 210, 255), (228, 185, 129, 190), 352, True),
+        ("ORIGINAL SOUND BY ATANDRA CHAKRABORTY (BURO)", 22, (247, 235, 210, 255), None, 408, False),
+        ("CINEMA  AND  DIRECTION    SAYAN BHATTACHARYA", 22, (247, 235, 210, 255), None, 442, False),
+        ("VIDEO PRODUCED BY SAYAN BHATTACHARYA", 22, (247, 235, 210, 255), None, 476, False),
     ]
     cards = []
     for text, size, fill, rule, y, _ruled in specs:
-        font = _font(size)
+        scale = 2
+        font = _font(size * scale, light=False)
         probe = ImageDraw.Draw(Image.new("RGB", (8, 8)))
         box = probe.textbbox((0, 0), text, font=font)
         tw, th = box[2] - box[0], box[3] - box[1]
-        pad = 8
+        pad = 16
         words = Image.new("RGBA", (tw + pad * 2, th + pad * 2), (0, 0, 0, 0))
-        ImageDraw.Draw(words).text((pad - box[0], pad - box[1]), text, font=font, fill=fill)
+        ImageDraw.Draw(words).text((pad - box[0], pad - box[1]), text, font=font, fill=fill,
+                                   stroke_width=6, stroke_fill=(12, 20, 24, 220))
+        words = words.resize((max(1, words.width // scale), max(1, words.height // scale)), Image.Resampling.LANCZOS)
         line = None
         if rule is not None:
-            span = tw if _ruled else 240
-            line = Image.new("RGBA", (span + pad * 2, 8), (0, 0, 0, 0))
-            ImageDraw.Draw(line).rectangle([pad, 2, pad + span, 5], fill=rule)
+            span = max(240, (tw // scale)) if _ruled else 240
+            line = Image.new("RGBA", (span + 16, 8), (0, 0, 0, 0))
+            ImageDraw.Draw(line).rectangle([8, 2, 8 + span, 5], fill=rule)
             line = np.asarray(line)
-        cards.append((np.asarray(words), line, 960 - (tw + pad * 2) / 2, y - th / 2))
+        cards.append((np.asarray(words), line, 960 - words.width / 2, y - words.height / 2))
     return cards
 
 
@@ -577,14 +580,6 @@ def _logo():
     return np.asarray(im)
 
 
-def _stripes():
-    im = Image.new("RGBA", (WIDTH, HORIZON), (0, 0, 0, 0))
-    d = ImageDraw.Draw(im)
-    for y in range(48, HORIZON - 70, 18):
-        d.rectangle([1668, y, 1864, y + 8], fill=(32, 148, 168, 170))
-    return np.asarray(im)
-
-
 def _vignette():
     yy = np.linspace(-1.0, 1.05, HEIGHT, dtype=np.float32)[:, None]
     xx = np.linspace(-1.0, 1.0, WIDTH, dtype=np.float32)[None, :]
@@ -699,7 +694,6 @@ def load():
         "face_meditating": _face_meditating(),
         "face_awake": _face_awake(),
         "logo": _logo(),
-        "stripes": _stripes(),
         "vignette": _vignette(),
         "outro_card": build_outro_card(LOGO_PATH),
         "stars": (
@@ -726,7 +720,6 @@ def load():
     plates["logo"] = _rgba(plates["logo"])
     plates["buddha"] = _rgba(plates["buddha"])
     plates["nebula"] = _rgba(plates["nebula"])
-    plates["stripes"] = _crop_rgba(plates["stripes"])
     packed = []
     for words, rule, x, y in plates["titles"]:
         packed.append((_rgba(words), None if rule is None else _rgba(rule), x, y))

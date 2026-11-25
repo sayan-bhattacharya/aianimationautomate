@@ -151,10 +151,10 @@ def _cut(t, start, hold, end):
 
 
 def title_lines(t):
-    # Tightened typography: 30% lesser on-screen time, crisp and clear
+    # Hold the opening title and credits through the bright sunrise, then fade out gently.
     p = _cut(t, 8.0, 18.0, 24.0)
-    film = _cut(t, 9.5, 19.5, 25.5)
-    credits = _cut(t, 11.0, 21.0, 27.0)
+    film = _cut(t, 9.5, 23.5, 28.5)
+    credits = _cut(t, 11.0, 24.0, 29.0)
     return ((p, p), (0.0, film), (film, film), (0.0, credits), (0.0, credits), (0.0, credits))
 
 

@@ -143,11 +143,12 @@ def build_outro_card(logo_path=None):
     _wordmark(draw, WIDTH / 2, 232)
     _signature_rule(draw, 520)
 
-    _centered(draw, 558, "ORIGINAL MUSIC", _font(24, bold=True), gold, tracking=3.8)
-    _centered(draw, 598, "ATANDRA CHAKRABORTY", _font(46, serif=True), ivory, tracking=1.5)
+    _centered(draw, 528, "COMPOSITION BY DRONE WATCH", _font(24, bold=True), gold, tracking=3.2)
+    _centered(draw, 582, "ORIGINAL SOUND BY", _font(22, bold=True), gold, tracking=3.0)
+    _centered(draw, 626, "ATANDRA CHAKRABORTY (BURO)", _font(42, serif=True), ivory, tracking=1.2)
     _centered(draw, 678, "A VISUAL MUSIC FILM BY", _font(22, bold=True), gold, tracking=3.2)
     _centered(draw, 716, "SAYAN BHATTACHARYA   |   ATANDRA CHAKRABORTY", _font(32, bold=True), ivory, tracking=1.0)
-    _centered(draw, 800, "BETWEENTHENOTES.ORG", _font(24, bold=True), gold, tracking=3.0)
+    _centered(draw, 800, "BETWEENTHENOTES.STORE", _font(24, bold=True), gold, tracking=3.0)
     _centered(draw, 850, "WHERE THE SILENCE SPEAKS", _font(20, bold=True), muted, tracking=3.2)
 
     return np.asarray(image).astype(np.float32)
@@ -168,7 +169,7 @@ def animate_outro_card(base_card, t):
     yy, xx = _OUTRO_GRID
 
     # Slow, graceful lateral spotlight sweep + mild volumetric breathing
-    sweep_x = WIDTH / 2.0 + math.sin(t * 0.85) * 90.0
+    sweep_x = WIDTH / 2.0 + math.sin(t * 0.28) * 58.0
     dy = yy + 30.0
     dx = np.abs(xx - sweep_x)
     cone_half_w = dy * 0.50 + 36.0
@@ -176,8 +177,8 @@ def animate_outro_card(base_card, t):
     vert_falloff = np.clip(1.0 - (yy / (HEIGHT * 1.12)), 0.12, 1.0)
 
     angle = np.arctan2(xx - sweep_x, dy)
-    ray_shimmer = 1.0 + 0.18 * np.sin(angle * 22.0 - t * 1.35) + 0.09 * np.cos(angle * 10.0 + t * 0.85)
-    breath = 0.75 + 0.25 * (0.5 + 0.5 * math.sin(t * 1.55))
+    ray_shimmer = 1.0 + 0.045 * np.sin(angle * 14.0 - t * 0.42) + 0.025 * np.cos(angle * 7.0 + t * 0.28)
+    breath = 0.94 + 0.06 * (0.5 + 0.5 * math.sin(t * 0.44))
 
     # Top projector aperture bloom
     lamp_bloom = np.exp(-(((xx - sweep_x) / 220.0) ** 2 + ((yy + 10.0) / 140.0) ** 2))
