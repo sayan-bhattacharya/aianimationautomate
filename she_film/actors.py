@@ -847,7 +847,7 @@ def solid(frame, t, lamp, alpha):
     return
 
 
-def birds(frame, plates, t, amount):
+def birds(frame, plates, t, amount, stillness=0.0):
     if amount < 0.04:
         return
     ink = np.array([28, 22, 26], np.float32)
@@ -891,38 +891,50 @@ def birds(frame, plates, t, amount):
         rot_ptero = cv2.warpAffine(ptero, M_ptero, (pw, ph), borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0, 0))
         over(frame, rot_ptero, p_x - pw / 2, p_y - ph / 2, min(0.95, 0.45 + 0.5 * amount))
 
-        pterodactyl_reflect(frame, rot_ptero, p_x, p_y, t, min(0.95, 0.45 + 0.5 * amount))
+        pterodactyl_reflect(
+            frame,
+            rot_ptero,
+            p_x,
+            p_y,
+            t,
+            min(0.95, 0.45 + 0.5 * amount),
+            stillness=stillness,
+            audio_feats=plates.get("audio_feats"),
+        )
 
     # Note: Marine animals (flying fish, plesiosaur, leviathan) temporarily removed per creative plan
     # for dedicated multi-frame Flow animation enhancement.
 
 
-def pterodactyl_reflect(frame, sprite, center_x, sky_y, t, alpha=0.65, stillness=0.0):
+def pterodactyl_reflect(frame, sprite, center_x, sky_y, t, alpha=0.65, stillness=0.0, audio_feats=None):
     """Paint a compressed, altitude-shifted flying-reptile reflection on the sea."""
     if sprite is None or alpha < 0.02:
         return
     sh, sw = sprite.shape[:2]
     altitude = max(0.0, HORIZON - float(sky_y))
     # Higher flight produces a shorter, more displaced reflection with a wider ripple.
-    scale_y = float(np.clip(0.48 - altitude / 1800.0, 0.24, 0.48))
-    ref_h = max(8, int(sh * scale_y))
-    ref_y = HORIZON + int(altitude * 0.46)
+    scale_y = float(np.clip(0.78 - altitude / 2200.0, 0.52, 0.78))
+    ref_h = max(12, int(sh * scale_y))
+    ref_y = HORIZON + int(altitude * 0.42)
     wave = max(0.0, 1.0 - float(stillness))
-    wobble = math.sin(t * 3.1 + center_x * 0.024) * (11.0 + altitude * 0.012) * wave
-    ref_w = max(8, int(sw * (0.92 + 0.08 * scale_y)))
+    wobble = math.sin(t * 3.1 + center_x * 0.024) * (10.0 + altitude * 0.012) * wave
+    ref_w = max(12, int(sw * (0.95 + 0.05 * scale_y)))
     reflection = cv2.resize(sprite[::-1], (ref_w, ref_h), interpolation=cv2.INTER_AREA).copy()
 
     day, warm, night = sky_weights(t)
-    tint = (np.array([56, 76, 92], np.float32) * day
-            + np.array([110, 70, 42], np.float32) * warm
-            + np.array([38, 88, 154], np.float32) * night)
-    reflection[:, :, :3] = np.clip(reflection[:, :, :3] * 0.30 + tint, 0, 255)
-    fresnel = float(np.clip(1.0 - altitude / 1100.0, 0.25, 0.85))
-    fade = np.linspace(0.42, 0.015, ref_h, dtype=np.float32)[:, None, None]
-    ripple = 0.72 + 0.28 * np.sin(np.arange(ref_h, dtype=np.float32)[:, None, None] * 0.36 + t * 4.0)
-    reflection[:, :, 3:4] *= fade * ripple * fresnel
+    tint = (np.array([48, 68, 82], np.float32) * day
+            + np.array([96, 62, 38], np.float32) * warm
+            + np.array([42, 88, 148], np.float32) * night)
+    reflection[:, :, :3] = np.clip(reflection[:, :, :3] * 0.65 + tint, 0, 255)
+    fresnel = float(np.clip(1.0 - altitude / 1400.0, 0.58, 0.92))
+    fade = np.linspace(0.92, 0.32, ref_h, dtype=np.float32)[:, None, None]
+    ripple = 0.84 + 0.16 * np.sin(np.arange(ref_h, dtype=np.float32)[:, None, None] * 0.32 + t * 4.0)
+    reflection[:, :, 3:4] = np.clip(reflection[:, :, 3:4] * fade * ripple, 0, 255)
+    reflection = _water_wave_refraction(
+        reflection, t, center_x, wave, audio_feats, phase=1.3, parallax=0.75
+    )
     if ref_y < HEIGHT - 1:
-        over(frame, reflection, center_x - ref_w / 2 + wobble, ref_y, alpha * fresnel * 0.62)
+        over(frame, reflection, center_x - ref_w / 2 + wobble, ref_y, min(0.92, alpha * fresnel))
 
 
 def _draw_grazing_sauropod(frame, x, y, neck_bend, t):
