@@ -139,41 +139,77 @@ def _water_wave_refraction(reflection, t, anchor_x, wave_factor, audio_feats, ph
     return out
 
 
-def _aurora_timelapse(frame, t, night):
-    """Exaggerated northern-lights time-lapse ribbons flowing across the night sky."""
-    if night < 0.06:
-        return
+def _aurora_field(t, night, sh, sw):
+    """Compute lighter, ethereal RGB northern-lights curtain field at quarter-res."""
     sky_h = HORIZON - 12
-    step = 4
-    sh, sw = sky_h // step, WIDTH // step
     xs = np.linspace(0.0, WIDTH, sw, dtype=np.float32)[None, :]
     ys = np.linspace(0.0, sky_h, sh, dtype=np.float32)[:, None]
 
-    # Flowing curtains at time-lapse speed, sweeping across stages of the night
     wave1 = np.sin(xs * 0.0045 - t * 0.48 + 0.6 * np.sin(xs * 0.002 + t * 0.18))
     wave2 = np.cos(xs * 0.0072 + t * 0.62)
     curtain_y = sky_h * (0.34 + 0.14 * wave1 + 0.07 * wave2)
-    band_spread = 46.0 + 18.0 * np.sin(xs * 0.003 - t * 0.31)
-    # Asymmetric vertical curtain: crisp lower edge, soft upward fade
+    band_spread = 52.0 + 18.0 * np.sin(xs * 0.003 - t * 0.31)
     dy = ys - curtain_y
     upward = np.where(dy < 0.0, np.exp(-0.5 * (dy / band_spread) ** 2), np.exp(-0.5 * (dy / (band_spread * 0.35)) ** 2))
 
-    # Color progression across the night: emerald-teal -> cyan -> violet-magenta aurora
+    # True RGB aurora palette: emerald-teal -> cyan -> soft violet
     stage_p = 0.5 + 0.5 * math.sin(t * 0.085)
-    col_emerald = np.array([125.0, 220.0, 62.0], dtype=np.float32)
-    col_cyan = np.array([225.0, 185.0, 58.0], dtype=np.float32)
-    col_violet = np.array([205.0, 82.0, 168.0], dtype=np.float32)
+    col_emerald = np.array([58.0, 215.0, 130.0], dtype=np.float32)
+    col_cyan = np.array([58.0, 185.0, 225.0], dtype=np.float32)
+    col_violet = np.array([162.0, 82.0, 205.0], dtype=np.float32)
     ribbon_mix = (0.5 + 0.5 * np.sin(xs * 0.004 - t * 0.35))[:, :, None]
     aurora_col = (
         col_emerald[None, None, :] * (1.0 - stage_p) * (1.0 - ribbon_mix * 0.5)
         + col_cyan[None, None, :] * (0.45 + 0.35 * ribbon_mix)
-        + col_violet[None, None, :] * stage_p * 0.75
+        + col_violet[None, None, :] * stage_p * 0.72
     )
 
-    intensity = upward * (0.16 + 0.14 * (0.5 + 0.5 * wave1)) * night
-    aurora_q = intensity[:, :, None] * aurora_col
+    # Lighter, restrained intensity so the night sky stays serene
+    intensity = upward * (0.08 + 0.08 * (0.5 + 0.5 * wave1)) * night
+    return intensity[:, :, None] * aurora_col
+
+
+def _aurora_timelapse(frame, t, night):
+    """Light, ethereal northern-lights time-lapse ribbons flowing across the night sky."""
+    if night < 0.06:
+        return
+    sky_h = HORIZON - 12
+    step = 4
+    aurora_q = _aurora_field(t, night, sky_h // step, WIDTH // step)
     aurora_full = cv2.resize(aurora_q, (WIDTH, sky_h), interpolation=cv2.INTER_LINEAR)
     frame[:sky_h] = np.clip(frame[:sky_h] + aurora_full, 0.0, 255.0)
+
+
+def aurora_reflect(frame, t, night, stillness=0.0):
+    """Render wavy, liquid reflection of the northern lights across the ocean surface."""
+    if night < 0.06:
+        return
+    sky_h = HORIZON - 12
+    water_h = HEIGHT - HORIZON
+    step = 4
+    sh, sw = sky_h // step, WIDTH // step
+    wh = water_h // step
+    aurora_q = _aurora_field(t, night, sh, sw)
+
+    # Flip sky aurora vertically and stretch smoothly across the water surface
+    flipped = cv2.resize(aurora_q[::-1], (sw, wh), interpolation=cv2.INTER_LINEAR)
+    fade = np.linspace(0.55, 0.04, wh, dtype=np.float32)[:, None, None]
+    flipped *= fade
+
+    # Wavy ocean refraction (stays gently wavy even in stillness, stronger when waves are active)
+    wave_factor = max(0.22, 1.0 - 0.78 * float(stillness))
+    yy, xx = np.mgrid[0:wh, 0:sw].astype(np.float32)
+    ripple_x = (
+        4.2 * np.sin(yy * 0.36 + t * 2.4 + xx * 0.04)
+        + 2.4 * np.cos(yy * 0.72 - t * 3.3)
+    ) * wave_factor
+    ripple_y = 1.4 * np.sin(xx * 0.08 + t * 1.9 + yy * 0.25) * wave_factor
+    map_x = np.clip(xx + ripple_x, 0, sw - 1).astype(np.float32)
+    map_y = np.clip(yy + ripple_y, 0, wh - 1).astype(np.float32)
+    wavy_q = cv2.remap(flipped, map_x, map_y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT_101)
+
+    wavy_full = cv2.resize(wavy_q, (WIDTH, water_h), interpolation=cv2.INTER_LINEAR)
+    frame[HORIZON:] = np.clip(frame[HORIZON:] + wavy_full * 0.85, 0.0, 255.0)
 
 
 def stars(frame, plates, t, night, moon_body):
