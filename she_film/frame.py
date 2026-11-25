@@ -523,6 +523,8 @@ def render(plates, t):
                           0.018 * near * max(0.0, 1.0 - saucer_alt / 420.0)))
     still = max(cover, water_stillness(t))
     frame[HORIZON:] = water.paint(base, t, lamps, stillness=still, audio_feats=plates.get("audio_feats"))
+    if star_amount > 0.04:
+        actors.aurora_reflect(frame, t, star_amount, stillness=still)
     if mushroom_alpha > 0.02:
         actors.life_reflect(frame, plates, t, stillness=still)
     if forest_alpha > 0.02:
