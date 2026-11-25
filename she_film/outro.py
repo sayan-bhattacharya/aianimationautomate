@@ -151,3 +151,38 @@ def build_outro_card(logo_path=None):
     _centered(draw, 850, "WHERE THE SILENCE SPEAKS", _font(20, bold=True), muted, tracking=3.2)
 
     return np.asarray(image).astype(np.float32)
+
+
+_OUTRO_GRID = None
+
+
+def animate_outro_card(base_card, t):
+    """Add a mild, Google Flow-style animated volumetric spotlight sweep & shimmer
+    over the end-credits card."""
+    global _OUTRO_GRID
+    if base_card is None:
+        return None
+    if _OUTRO_GRID is None:
+        yy, xx = np.mgrid[0:HEIGHT, 0:WIDTH].astype(np.float32)
+        _OUTRO_GRID = (yy, xx)
+    yy, xx = _OUTRO_GRID
+
+    # Slow, graceful lateral spotlight sweep + mild volumetric breathing
+    sweep_x = WIDTH / 2.0 + math.sin(t * 0.85) * 90.0
+    dy = yy + 30.0
+    dx = np.abs(xx - sweep_x)
+    cone_half_w = dy * 0.50 + 36.0
+    cone_mask = np.clip(1.0 - (dx / np.maximum(1.0, cone_half_w)) ** 2, 0.0, 1.0) ** 2.0
+    vert_falloff = np.clip(1.0 - (yy / (HEIGHT * 1.12)), 0.12, 1.0)
+
+    angle = np.arctan2(xx - sweep_x, dy)
+    ray_shimmer = 1.0 + 0.18 * np.sin(angle * 22.0 - t * 1.35) + 0.09 * np.cos(angle * 10.0 + t * 0.85)
+    breath = 0.75 + 0.25 * (0.5 + 0.5 * math.sin(t * 1.55))
+
+    # Top projector aperture bloom
+    lamp_bloom = np.exp(-(((xx - sweep_x) / 220.0) ** 2 + ((yy + 10.0) / 140.0) ** 2))
+    beam = (cone_mask * vert_falloff * ray_shimmer * breath + lamp_bloom * 0.35 * breath)[:, :, None]
+
+    # Warm champagne-gold spotlight tint (RGB)
+    beam_rgb = np.array([255.0, 224.0, 165.0], dtype=np.float32)
+    return np.clip(base_card + beam * beam_rgb * 0.16, 0.0, 255.0)

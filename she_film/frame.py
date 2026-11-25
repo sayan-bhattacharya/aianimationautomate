@@ -4,7 +4,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from she_film import actors, grade, mirage, water
+from she_film import actors, grade, mirage, outro, water
 from she_film.mirage import refract_background
 from she_film.clock import (
     HEIGHT,
@@ -600,7 +600,7 @@ def render(plates, t):
     # end card. The final two seconds fade both picture and credits to black.
     if t >= OUTRO_TRANSITION_START and plates.get("outro_card") is not None:
         card_mix = smooth((t - OUTRO_TRANSITION_START) / 2.0)
-        card = plates["outro_card"]
+        card = outro.animate_outro_card(plates["outro_card"], t)
         frame = frame * (1.0 - card_mix) + card * card_mix
     if t >= OUTRO_FADE_START:
         picture_fade = smooth((t - OUTRO_FADE_START) / (DURATION - OUTRO_FADE_START))
