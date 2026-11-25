@@ -545,7 +545,7 @@ def render(plates, t):
             actors.over(frame, words, x, y, text_a)
 
     actors.snow(frame, plates, t, snow_amount(t), moon_body, None)
-    actors.birds(frame, plates, t, birds(t))
+    actors.birds(frame, plates, t, birds(t), stillness=still)
 
     # The Waking / Glitch De-rezzing Transition into the 1970s Telemetry Studio & Front-Facing Buddha
     veil = dream(t)
