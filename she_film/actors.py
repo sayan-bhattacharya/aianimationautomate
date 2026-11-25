@@ -394,7 +394,17 @@ def _get_active_mushroom_stands(plates, t):
         # Delay propagates from leftmost stand (x=340) to rightmost stand (x=1540)
         wave_delay = (x - 340.0) / 380.0
         
-        if stand_index == 1:
+        if 166.0 <= t <= 176.0:
+            # Physically retract into the soil by playing the Flow growth clip in reverse
+            retract_p = smooth((t - 166.0) / 10.0)
+            raw = vs_growth.get_frame(MUSHROOM_GROWTH_SECONDS * (1.0 - retract_p), loop=False)
+            a_fade = 1.0 - smooth((t - 174.0) / 2.0)
+        elif 400.0 <= t <= 416.0:
+            # Returning bioluminescent mushrooms sprout organically out of the soil
+            sprout_p = smooth((t - 400.0) / 12.0)
+            raw = vs_growth.get_frame(MUSHROOM_GROWTH_SECONDS * sprout_p, loop=False)
+            a_fade = min(1.0, sprout_p * 3.0)
+        elif stand_index == 1:
             raw, decay_scale = mushroom2_lifecycle_frame(plates, age)
             grow_scale *= decay_scale
             # User feedback: Depth in Z direction should NOT just be translucency/opacity reduction.
@@ -495,7 +505,7 @@ def _get_active_mushroom_stands(plates, t):
             cap_rows = int(th * 0.65)
             pulse = (0.68 + 0.24 * math.sin(t * 3.2 + wave_delay * 2.0)) * (0.85 + 0.35 * music_e)
             cap_mask = scaled[:cap_rows, :, 3] * np.linspace(1.0, 0.0, cap_rows, dtype=np.float32)[:, None]
-            blue_lum = np.array([235.0, 175.0, 45.0], dtype=np.float32)  # cyan-blue radiance in BGR
+            blue_lum = np.array([45.0, 175.0, 235.0], dtype=np.float32)  # cyan-blue radiance in RGB
             scaled[:cap_rows, :, :3] += blue_lum * (cap_mask[:, :, None] * 0.45 * pulse * return_progress)
             scaled[:, :, :3] = np.clip(scaled[:, :, :3], 0, 255)
 
@@ -774,6 +784,15 @@ def forest(frame, plates, t, presence, decay=0.0, depth_layers=None, respect_rid
             if wither_w != w:
                 sprite = cv2.resize(sprite, (wither_w, h), interpolation=cv2.INTER_LINEAR)
                 w = wither_w
+        if index != 2 and not growing and decay <= 0.001:
+            # Parasympathetic drone-swell breathing (kept off the still 3rd center tree)
+            swell_h_mod, swell_w_mod = _parasympathetic_swell_mod(t, plates.get("audio_feats"))
+            bw = max(8, int(w * swell_w_mod))
+            bh = max(8, int(h * swell_h_mod))
+            if bw != w or bh != h:
+                sprite = cv2.resize(sprite, (bw, bh), interpolation=cv2.INTER_LINEAR)
+                soil_offset += h - bh
+                w, h = bw, bh
         # Seat root base 5px into the soil so root spurs firmly penetrate the beach sand
         left, top = int(x - w / 2), ground_y - root_row + 5 + soil_offset
 
