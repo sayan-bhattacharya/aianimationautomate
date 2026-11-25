@@ -753,6 +753,10 @@ def load():
     plates["anim_raptor"] = video_sprites.load_cached_video_sprite("raptor_walk")
     plates["anim_mushroom_growth"] = video_sprites.load_cached_video_sprite("anim_mushroom_growth")
     plates["anim_mushroom_idle"] = video_sprites.load_cached_video_sprite("anim_mushroom_idle")
+    plates["flow_mushroom_sprout_v2"] = video_sprites.load_cached_video_sprite("flow_mushroom_sprout_v2")
+    plates["flow_mushroom_decay_v2"] = video_sprites.load_cached_video_sprite("flow_mushroom_decay_v2")
+    plates["flow_pine_sprout_v2"] = video_sprites.load_cached_video_sprite("flow_pine_sprout_v2")
+    plates["flow_pine_decay_v2"] = video_sprites.load_cached_video_sprite("flow_pine_decay_v2")
 
     screens_npz = os.path.join(CACHE, "screens_90s.npz")
     if os.path.exists(screens_npz):

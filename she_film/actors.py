@@ -395,14 +395,22 @@ def _get_active_mushroom_stands(plates, t):
         wave_delay = (x - 340.0) / 380.0
         
         if 166.0 <= t <= 176.0:
-            # Physically retract into the soil by playing the Flow growth clip in reverse
+            # Physically retract/wither into the soil using Flow mushroom decay clip
             retract_p = smooth((t - 166.0) / 10.0)
-            raw = vs_growth.get_frame(MUSHROOM_GROWTH_SECONDS * (1.0 - retract_p), loop=False)
-            a_fade = 1.0 - smooth((t - 174.0) / 2.0)
+            vs_decay = plates.get("flow_mushroom_decay_v2")
+            if vs_decay is not None:
+                raw = vs_decay.get_frame(8.0 * retract_p, loop=False)
+            else:
+                raw = vs_growth.get_frame(MUSHROOM_GROWTH_SECONDS * (1.0 - retract_p), loop=False)
+            a_fade = 1.0 - smooth((t - 174.5) / 1.5)
         elif 400.0 <= t <= 416.0:
-            # Returning bioluminescent mushrooms sprout organically out of the soil
+            # Returning bioluminescent mushrooms sprout organically out of the soil via Flow sprout clip
             sprout_p = smooth((t - 400.0) / 12.0)
-            raw = vs_growth.get_frame(MUSHROOM_GROWTH_SECONDS * sprout_p, loop=False)
+            vs_sprout = plates.get("flow_mushroom_sprout_v2")
+            if vs_sprout is not None:
+                raw = vs_sprout.get_frame(8.0 * sprout_p, loop=False)
+            else:
+                raw = vs_growth.get_frame(MUSHROOM_GROWTH_SECONDS * sprout_p, loop=False)
             a_fade = min(1.0, sprout_p * 3.0)
         elif stand_index == 1:
             raw, decay_scale = mushroom2_lifecycle_frame(plates, age)
@@ -749,6 +757,23 @@ def forest(frame, plates, t, presence, decay=0.0, depth_layers=None, respect_rid
             frame[y0:y1, x0:x1] += (tint - frame[y0:y1, x0:x1]) * src
 
         sprite = spr.copy()
+        vs_pine_sprout = plates.get("flow_pine_sprout_v2")
+        vs_pine_decay = plates.get("flow_pine_decay_v2")
+        if growing and vs_pine_sprout is not None:
+            s_frame = vs_pine_sprout.get_frame(8.0 * emerge_p, loop=False)
+            if s_frame is not None:
+                s_rgba = s_frame.astype(np.float32)
+                s_resized = cv2.resize(s_rgba, (w, h), interpolation=cv2.INTER_LINEAR)
+                blend_mature = smooth((emerge_p - 0.80) / 0.20)
+                sprite = sprite * blend_mature + s_resized * (1.0 - blend_mature)
+        elif decay > 0.001 and vs_pine_decay is not None:
+            d_frame = vs_pine_decay.get_frame(8.0 * float(np.clip(decay, 0.0, 1.0)), loop=False)
+            if d_frame is not None:
+                d_rgba = d_frame.astype(np.float32)
+                d_resized = cv2.resize(d_rgba, (w, h), interpolation=cv2.INTER_LINEAR)
+                blend_decay = smooth(decay / 0.22)
+                sprite = sprite * (1.0 - blend_decay) + d_resized * blend_decay
+
         sprite = _tree_wind_and_contact(sprite, t, x, index, depth)
         if index == 0:
             # Subtle portrait depth-of-field blur on nearest foreground tree with large angular diameter
@@ -878,7 +903,20 @@ def forest_reflect(frame, plates, t, presence, decay=0.0, stillness=0.0):
         if tree_presence < 0.01:
             continue
         h, w = spr.shape[:2]
-        ref_src = _tree_wind_and_contact(spr.copy(), t, x, index, FOREST_GROUND_LAYERS[index])
+        src_for_ref = spr.copy()
+        if growing and plates.get("flow_pine_sprout_v2") is not None:
+            sf = plates["flow_pine_sprout_v2"].get_frame(8.0 * emerge_p, loop=False)
+            if sf is not None:
+                sr = cv2.resize(sf.astype(np.float32), (w, h), interpolation=cv2.INTER_LINEAR)
+                bm = smooth((emerge_p - 0.80) / 0.20)
+                src_for_ref = src_for_ref * bm + sr * (1.0 - bm)
+        elif decay > 0.001 and plates.get("flow_pine_decay_v2") is not None:
+            df = plates["flow_pine_decay_v2"].get_frame(8.0 * float(np.clip(decay, 0.0, 1.0)), loop=False)
+            if df is not None:
+                dr = cv2.resize(df.astype(np.float32), (w, h), interpolation=cv2.INTER_LINEAR)
+                bd = smooth(decay / 0.22)
+                src_for_ref = src_for_ref * (1.0 - bd) + dr * bd
+        ref_src = _tree_wind_and_contact(src_for_ref, t, x, index, FOREST_GROUND_LAYERS[index])
         ref_scale = emerge_p if growing else max(0.25, 1.0 - 0.62 * decay)
         ref_h = max(6, int(h * FOREST_REFLECTION_HEIGHT[index] * ref_scale))
         ref_w = max(8, int(w * (0.70 + 0.30 * emerge_p if growing else 1.0 - 0.22 * decay)))
