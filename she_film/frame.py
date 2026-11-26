@@ -537,12 +537,14 @@ def render(plates, t):
         frame = frame * (1.0 - buddha_alpha) + plates["cosmic_demigod"] * buddha_alpha
         _render_buddha_waveform(frame, t, buddha_alpha, plates)
 
-    for (rule_a, text_a), (words, rule, x, y) in zip(title_lines(t), plates["titles"]):
+    for idx_t, ((rule_a, text_a), (words, rule, x, y)) in enumerate(zip(title_lines(t), plates["titles"])):
+        # Subtle 5px upward drift during each layer's fade-in (meditative settle)
+        drift_y = 5.0 * (1.0 - min(1.0, text_a)) if (8.0 <= t <= 14.5 and text_a > 0.02) else 0.0
         if rule is not None and rule_a > 0.02:
-            ry = 144.0 if rule.shape[0] == 1 else (y + words.shape[0] - 2)
+            ry = (116.0 if rule.shape[0] == 1 else (y + words.shape[0] - 2)) + drift_y
             actors.over(frame, rule, x + (words.shape[1] - rule.shape[1]) / 2, ry, rule_a)
         if text_a > 0.02:
-            actors.over(frame, words, x, y, text_a)
+            actors.over(frame, words, x, y + drift_y, text_a)
 
     actors.snow(frame, plates, t, snow_amount(t), moon_body, None)
     actors.birds(frame, plates, t, birds(t), stillness=still)
