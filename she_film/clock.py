@@ -23,7 +23,7 @@ VISIT_LANDING_NEAR = 0.70
 VISIT_HULL_BOTTOM_FRACTION = 70.0 / 90.0  # opaque hull bottom in the source saucer sprite
 MUSHROOM_EXIT_END = VISIT_START + 10.0
 FIR_EMERGENCE_START = MUSHROOM_EXIT_END
-FIR_EMERGENCE_END = FIR_EMERGENCE_START + 8.0
+FIR_EMERGENCE_END = VISIT_DEPARTURE_END  # 36s slow growth (176s -> 212s), reaching 100% right as saucer exits
 
 
 def clamp(p, lo=0.0, hi=1.0):
