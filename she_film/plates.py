@@ -200,12 +200,12 @@ def _title_cards():
     divider_col = (57, 73, 74, 89)      # #39494A @ 35%
 
     specs = [
-        ("BETWEEN THE NOTES PRESENTS", "manrope", 18, 500, 0.075, graphite_teal, 145, True),
-        ("SHE", "cormorant", 112, 500, 0.22, ink_teal, 270, False),
-        ("COMPOSITION BY DRONE WATCH", "manrope", 20, 300, 0.055, graphite_teal, 325, False),
-        ("ORIGINAL SOUND BY ATANDRA CHAKRABORTY (BURO)", "manrope", 20, 300, 0.055, graphite_teal, 355, False),
-        ("CINEMA & DIRECTION — SAYAN BHATTACHARYA", "manrope", 20, 300, 0.055, graphite_teal, 385, False),
-        ("VIDEO PRODUCTION — SAYAN BHATTACHARYA", "manrope", 20, 300, 0.055, graphite_teal, 415, False),
+        ("BETWEEN THE NOTES PRESENTS", "manrope", 18, 500, 0.075, graphite_teal, 120, True),
+        ("SHE", "cormorant", 112, 500, 0.22, ink_teal, 238, False),
+        ("COMPOSITION BY DRONE WATCH", "manrope", 20, 300, 0.055, graphite_teal, 292, False),
+        ("ORIGINAL SOUND BY ATANDRA CHAKRABORTY (BURO)", "manrope", 20, 300, 0.055, graphite_teal, 322, False),
+        ("CINEMA & DIRECTION — SAYAN BHATTACHARYA", "manrope", 20, 300, 0.055, graphite_teal, 352, False),
+        ("VIDEO PRODUCTION — SAYAN BHATTACHARYA", "manrope", 20, 300, 0.055, graphite_teal, 382, False),
     ]
     cards = []
     for text, family, size, weight, em_track, fill, baseline_y, has_divider in specs:
