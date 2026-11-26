@@ -180,8 +180,9 @@ def _aurora_timelapse(frame, t, night):
     frame[:sky_h] = np.clip(frame[:sky_h] + aurora_full, 0.0, 255.0)
 
 
-def aurora_reflect(frame, t, night, stillness=0.0):
-    """Render wavy, liquid reflection of the northern lights across the ocean surface."""
+def aurora_reflect(frame, t, night, stillness=0.0, audio_feats=None, moon_body=None):
+    """Render a mild, wavy reflection of the northern lights modulated by
+    audio transients and the moon's ray-traced reflection column."""
     if night < 0.06:
         return
     sky_h = HORIZON - 12
@@ -193,7 +194,7 @@ def aurora_reflect(frame, t, night, stillness=0.0):
 
     # Flip sky aurora vertically and stretch smoothly across the water surface
     flipped = cv2.resize(aurora_q[::-1], (sw, wh), interpolation=cv2.INTER_LINEAR)
-    fade = np.linspace(0.55, 0.04, wh, dtype=np.float32)[:, None, None]
+    fade = np.linspace(0.46, 0.03, wh, dtype=np.float32)[:, None, None]
     flipped *= fade
 
     # Wavy ocean refraction (stays gently wavy even in stillness, stronger when waves are active)
@@ -208,8 +209,24 @@ def aurora_reflect(frame, t, night, stillness=0.0):
     map_y = np.clip(yy + ripple_y, 0, wh - 1).astype(np.float32)
     wavy_q = cv2.remap(flipped, map_x, map_y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT_101)
 
+    # Modulate intensity with musical note transients (matching water.py) & moon ray-traced path
+    note_energy = 0.0
+    if audio_feats is not None and len(audio_feats) > 0:
+        f_idx = min(len(audio_feats) - 1, max(0, int(t * 24.0)))
+        note_energy = float(audio_feats[f_idx, 9] * 0.70 + audio_feats[f_idx, 5] * 0.30)
+    transient_mod = 0.62 + 0.58 * float(np.clip(note_energy, 0.0, 1.0))
+
+    ray_mod = 1.0
+    if moon_body is not None:
+        mx_q = float(moon_body[0]) / step
+        col_w = (55.0 + 165.0 * (yy / max(1.0, float(wh)))) / step
+        moon_vis = float(smooth((moon_body[1] + 16.0) / 30.0))
+        moon_col = np.exp(-0.5 * ((xx - mx_q) / np.maximum(1.0, col_w)) ** 2) * moon_vis
+        ray_mod = (1.0 + 0.50 * moon_col)[:, :, None]
+
+    wavy_q *= transient_mod * ray_mod
     wavy_full = cv2.resize(wavy_q, (WIDTH, water_h), interpolation=cv2.INTER_LINEAR)
-    frame[HORIZON:] = np.clip(frame[HORIZON:] + wavy_full * 0.85, 0.0, 255.0)
+    frame[HORIZON:] = np.clip(frame[HORIZON:] + wavy_full * 0.62, 0.0, 255.0)
 
 
 def stars(frame, plates, t, night, moon_body):

@@ -381,14 +381,6 @@ def render(plates, t):
             fade,
         )
 
-    # Right-hand credits stripes artifact: cleanly eliminated by t=14.0s for pristine sunrise
-    if t < 14.0:
-        stripe_fade = smooth((14.0 - t) / 2.5) if t >= 11.5 else 1.0
-        stripe_a = (0.12 * night + 0.55 * warm + 0.35 * day) * stripe_fade
-        if stripe_a > 0.02:
-            stripes, sx, sy = plates["stripes"]
-            actors.over(frame, stripes, sx, sy, stripe_a)
-
     ridge_colors = (
         np.array([186 * warm + 150 * day + 42 * night, 96 * warm + 142 * day + 40 * night, 64 * warm + 160 * day + 68 * night], np.float32),
         np.array([128 * warm + 102 * day + 30 * night, 72 * warm + 112 * day + 30 * night, 64 * warm + 130 * day + 52 * night], np.float32),
@@ -524,7 +516,14 @@ def render(plates, t):
     still = max(cover, water_stillness(t))
     frame[HORIZON:] = water.paint(base, t, lamps, stillness=still, audio_feats=plates.get("audio_feats"))
     if star_amount > 0.04:
-        actors.aurora_reflect(frame, t, star_amount, stillness=still)
+        actors.aurora_reflect(
+            frame,
+            t,
+            star_amount,
+            stillness=still,
+            audio_feats=plates.get("audio_feats"),
+            moon_body=moon_body,
+        )
     if mushroom_alpha > 0.02:
         actors.life_reflect(frame, plates, t, stillness=still)
     if forest_alpha > 0.02:
@@ -553,33 +552,31 @@ def render(plates, t):
         # Front-facing Buddha in walnut telemetry suite with animated CRT screen feeds
         physical_reality = _render_studio_screens(plates["lab"], t, plates)
         
-        # Heavy Cybernetic Glitch & Reality Flicker (420s <= t <= 436s)
+        # Keep the transition uncanny but calm; large flashes and long tears
+        # interrupt the sustained listening the film is built for.
         eff_veil = veil
         if 0.02 < veil < 0.98:
-            flicker = math.sin(t * 42.0) * math.cos(t * 26.5)
-            flicker_spike = math.sin(t * 78.3)
-            micro = 0.16 * flicker + 0.22 * max(0.0, flicker_spike - 0.6)
+            flicker = math.sin(t * 9.0) * math.cos(t * 5.2)
+            micro = 0.035 * flicker
             eff_veil = np.clip(veil + micro, 0.0, 1.0)
             
         mixed = frame * (1.0 - eff_veil) + physical_reality * eff_veil
         
-        # Matrix simulation tearing: horizontal slice shifts, scanline noise & chromatic RGB splitting
-        if 0.04 < veil < 0.96 and (math.sin(t * 62.0) > 0.35 or int(t * 24) % 7 == 0):
+        # A very occasional, narrow CRT tear keeps the reveal tangible without
+        # turning it into a high-energy glitch montage.
+        if 0.04 < veil < 0.96 and int(t * 24) % 29 == 0:
             glitched = mixed.copy()
             rng_val = int(t * 150)
-            # Displace 4 distinct horizontal simulation bands
-            for i in range(4):
-                y_start = (rng_val * 61 + i * 197) % (HEIGHT - 60)
-                band_h = 6 + (rng_val * 17 + i * 31) % 36
+            for i in range(2):
+                y_start = (rng_val * 61 + i * 197) % (HEIGHT - 18)
+                band_h = 3 + (rng_val * 7 + i * 11) % 8
                 y_end = min(HEIGHT, y_start + band_h)
-                shift_x = ((rng_val + i * 43) % 41) - 20
+                shift_x = ((rng_val + i * 13) % 13) - 6
                 if shift_x != 0:
                     band = glitched[y_start:y_end]
-                    # Chromatic aberration RGB split
                     band[:, :, 0] = np.roll(band[:, :, 0], shift_x, axis=1)
                     band[:, :, 2] = np.roll(band[:, :, 2], -shift_x, axis=1)
-                    # Analog CRT scanline brightening
-                    band[:, :, :] = np.clip(band * 1.25 + 24, 0, 255)
+                    band[:, :, :] = np.clip(band * 1.035 + 3, 0, 255)
                     glitched[y_start:y_end] = band
             frame = glitched
         else:
