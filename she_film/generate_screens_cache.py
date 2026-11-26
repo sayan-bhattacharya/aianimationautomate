@@ -140,6 +140,110 @@ def _dinosaur_plate(asset_path):
     return np.asarray(frames, dtype=np.uint8)
 
 
+def _dinosaur_drone_plate(asset_path, variant=0):
+    """Painterly 2.5D aerial pass over the film's coastal dinosaur landscape.
+
+    The slow camera drift is built from deterministic depth layers rather than
+    a mismatched photorealistic render, so the insert belongs to this film's
+    painted world while reading as a small drone move inside the CRT.
+    """
+    sprite = cv2.imread(asset_path, cv2.IMREAD_UNCHANGED)
+    if sprite is None or sprite.ndim != 3 or sprite.shape[2] != 4:
+        raise FileNotFoundError(f"Required dinosaur screen asset not found: {asset_path}")
+    sprite = cv2.cvtColor(sprite, cv2.COLOR_BGRA2RGBA)
+    out_w, out_h = FRAME_SIZE
+    sh, sw = sprite.shape[:2]
+    frames = []
+    yy, xx = np.mgrid[0:out_h, 0:out_w].astype(np.float32)
+    phase_arr = np.arange(FRAME_COUNT, dtype=np.float32) / (FRAME_COUNT - 1)
+    for i, phase in enumerate(phase_arr):
+        # A slow, loopable crane-forward / lateral camera path.
+        travel = 0.5 - 0.5 * np.cos(phase * 2.0 * np.pi)
+        cam_x = (travel - 0.5) * (10.0 if variant == 0 else -13.0)
+        cam_y = (travel - 0.5) * 5.0
+        horizon = 126 + int(round(cam_y))
+        frame = np.zeros((out_h, out_w, 3), dtype=np.float32)
+        sky_mix = np.clip(yy / max(1.0, float(horizon)), 0.0, 1.0)
+        # Film's muted teal air over a warm, moonlit coastline.
+        frame[:, :, 0] = 25 + 22 * sky_mix
+        frame[:, :, 1] = 46 + 38 * sky_mix
+        frame[:, :, 2] = 55 + 31 * sky_mix
+        # Receding ridges move at different rates to imply aerial depth.
+        for layer, (base_y, amplitude, color, speed) in enumerate((
+            (horizon + 23, 5, (54, 78, 78), 0.35),
+            (horizon + 50, 8, (78, 91, 76), 0.65),
+            (horizon + 78, 11, (123, 112, 79), 1.0),
+        )):
+            ridge_x = xx + cam_x * speed
+            ridge = base_y + amplitude * np.sin(ridge_x * (0.032 + layer * 0.009) + phase * np.pi * 2.0)
+            mask = yy >= ridge
+            frame[mask] = np.asarray(color, np.float32)
+        # Sand shelves and quiet contour lines create a clear aerial perspective.
+        floor = yy >= horizon + 79
+        sand = np.clip((yy - (horizon + 79)) / 110.0, 0.0, 1.0)
+        sand_rgb = np.stack((150 + 22 * sand, 125 + 16 * sand, 84 + 12 * sand), axis=2)
+        frame[floor] = sand_rgb[floor]
+        for line_y in (horizon + 100, horizon + 132, horizon + 176, horizon + 235):
+            curve = line_y + 3.0 * np.sin((xx + cam_x) * 0.025 + phase * np.pi * 2.0)
+            line = np.abs(yy - curve) < 0.65
+            frame[line] = frame[line] * 0.88 + np.array([7.0, 5.0, 2.0], np.float32)
+
+        # Three distant herd silhouettes follow the coast; scale encodes depth.
+        for j, (depth, base_x, size) in enumerate(((0.32, 0.31, 0.12), (0.48, 0.56, 0.17), (0.68, 0.76, 0.22))):
+            scale = size * (1.0 + 0.035 * np.sin(phase * np.pi * 2.0 + j))
+            nw, nh = max(8, int(sw * scale)), max(8, int(sh * scale))
+            dino = cv2.resize(sprite, (nw, nh), interpolation=cv2.INTER_AREA)
+            x = int(out_w * base_x - nw / 2 + cam_x * (0.7 + depth))
+            y = int(horizon + 62 + depth * 78 + cam_y * depth - nh * 0.72)
+            x0, y0 = max(0, x), max(0, y)
+            x1, y1 = min(out_w, x + nw), min(out_h, y + nh)
+            if x1 <= x0 or y1 <= y0:
+                continue
+            crop = dino[y0-y:y1-y, x0-x:x1-x]
+            alpha = crop[:, :, 3:4].astype(np.float32) / 255.0
+            # Each animal's shadow anchors it to the ground plane.
+            shadow_y = min(out_h - 1, y + int(nh * 0.78))
+            cv2.ellipse(frame, (x + nw // 2, shadow_y), (max(4, nw // 3), max(1, nh // 16)),
+                        0, 0, 360, (43, 43, 35), -1, cv2.LINE_AA)
+            target = frame[y0:y1, x0:x1]
+            target[:] = target * (1.0 - alpha) + crop[:, :, :3].astype(np.float32) * alpha
+
+        # Soft atmospheric veil and subtle lens vignette keep the feed quiet.
+        nx = (xx - (out_w - 1) * 0.5) / ((out_w - 1) * 0.5)
+        ny = (yy - (out_h - 1) * 0.5) / ((out_h - 1) * 0.5)
+        vignette = np.clip(1.0 - 0.12 * (nx * nx + ny * ny), 0.78, 1.0)
+        frame *= vignette[:, :, None]
+        frames.append(np.clip(frame, 0, 255).astype(np.uint8))
+    return np.asarray(frames, dtype=np.uint8)
+
+
+def _analog_noise_loop():
+    """Low-contrast analog snow with slow roll; noise stays inside one CRT."""
+    out_w, out_h = FRAME_SIZE
+    frames = []
+    # Small-grain source enlarges into gentle CRT texture and compresses well.
+    for i in range(FRAME_COUNT):
+        rng = np.random.default_rng(i % (FPS * 3))
+        base = np.zeros((out_h, out_w, 3), dtype=np.uint8)
+        base[:] = (22, 29, 37)
+        grain = rng.integers(0, 256, (40, 30), dtype=np.uint8)
+        grain = cv2.resize(grain, (out_w, out_h), interpolation=cv2.INTER_LINEAR)
+        grain = (grain.astype(np.float32) - 127.5) * 0.20
+        base = np.clip(base.astype(np.float32) + grain[:, :, None] * np.array([0.80, 1.0, 1.12]), 0, 255)
+        roll_y = int((i * 1.7) % out_h)
+        band = np.exp(-0.5 * ((yy_line(out_h) - roll_y) / 18.0) ** 2)[:, None]
+        base += band[:, :, None] * np.array([14.0, 18.0, 24.0], np.float32)
+        frame = np.clip(base, 0, 255).astype(np.uint8)
+        frame[::2] = (frame[::2].astype(np.float32) * 0.90).astype(np.uint8)
+        frames.append(frame)
+    return np.asarray(frames, dtype=np.uint8)
+
+
+def yy_line(height):
+    """One-dimensional row coordinate helper used by the CRT roll band."""
+    return np.arange(height, dtype=np.float32)
+
+
 def _channel_hop_loop():
     """A playful channel surf: warm rom-com, analog snow, and wildlife."""
     out_w, out_h = FRAME_SIZE
@@ -180,32 +284,65 @@ def _channel_hop_loop():
     return np.asarray(frames, dtype=np.uint8)
 
 
+def _flow_drone_loop(flow_dir):
+    """Build a 22-second (528-frame) portrait-cropped CRT feed from the watermark-free
+    Flow drone aerials (scene-01..03.mp4) for the Buddha's right-hand monitor."""
+    out_w, out_h = FRAME_SIZE
+    clips = ["scene-01.mp4", "scene-02.mp4", "scene-03.mp4"]
+    raw_frames = []
+    for cname in clips:
+        cpath = os.path.join(flow_dir, cname)
+        if not os.path.exists(cpath):
+            continue
+        cap = cv2.VideoCapture(cpath)
+        while True:
+            ok, bgr = cap.read()
+            if not ok:
+                break
+            h, w = bgr.shape[:2]
+            # Center portrait crop (3:4) naturally excludes the bottom-right corner too,
+            # and we also clean the corner just in case.
+            target_aspect = out_w / float(out_h)
+            crop_w = min(w, int(h * target_aspect))
+            x0 = (w - crop_w) // 2
+            crop = bgr[:, x0 : x0 + crop_w]
+            rgb = cv2.cvtColor(cv2.resize(crop, (out_w, out_h), interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2RGB)
+            # Subtle CRT phosphor warmth + edge vignette
+            f = rgb.astype(np.float32)
+            f[:, :, 0] *= 0.96
+            f[:, :, 2] *= 1.04
+            raw_frames.append(np.clip(f, 0, 255).astype(np.uint8))
+        cap.release()
+
+    if not raw_frames:
+        return None
+
+    idxs = np.linspace(0, len(raw_frames) - 1, FRAME_COUNT, dtype=int)
+    out = [raw_frames[i] for i in idxs]
+    return np.asarray(out, dtype=np.uint8)
+
+
 def build_screens_cache(output_dir=None):
     film_dir = os.path.dirname(os.path.abspath(__file__))
     if output_dir is None:
         output_dir = os.path.join(film_dir, "cache")
     os.makedirs(output_dir, exist_ok=True)
     cache_dir = os.path.join(film_dir, "cache")
+    flow_dir = os.path.join(os.path.dirname(film_dir), "assets", "flow_aerials")
 
-    # Assign distinct programs to all four monitors:
-    # scr_left: Rom-com "LOVE TV" & cheetah "NATIONAL GEOGRAPHIC" channel surfing loop
-    # scr_mid_left: Dinosaur closed-loop walk animation
-    # scr_mid_right: Dynamic dinosaur simulation perspective loop
-    # scr_right: Cosmic Buddha kaleidoscopic motion
-    cosmic_buddha = _read_plate(os.path.join(cache_dir, "buddha_cosmic_demigod.jpg"))
-    right_plates = [
-        _detail_crop(cosmic_buddha, 0.52, 0.37, 2.15),
-        _detail_crop(cosmic_buddha, 0.52, 0.69, 2.45),
-    ]
-    arr_right = _make_loop(right_plates, variant=1)
+    # User direction: first/left screen gets a coastal dinosaur drone pass;
+    # right-hand screen displays the Flow aerial drone visualizations!
     arr_dino = _dinosaur_plate(os.path.join(cache_dir, "flow_pokemon_dino_scaled.png"))
-    arr_channels = _channel_hop_loop()
-    arr_dino_sim = _detail_crop(arr_dino, 0.5, 0.5, 1.15) if arr_dino.ndim == 3 else arr_dino[:, :, ::-1]
+    arr_drone = _dinosaur_drone_plate(os.path.join(cache_dir, "flow_pokemon_dino_scaled.png"), variant=0)
+    arr_dino_sim = _dinosaur_drone_plate(os.path.join(cache_dir, "flow_pokemon_dino_scaled.png"), variant=1)
+    arr_right = _flow_drone_loop(flow_dir)
+    if arr_right is None:
+        arr_right = _analog_noise_loop()
     
     out_npz = os.path.join(output_dir, "screens_90s.npz")
-    np.savez_compressed(out_npz, scr_left=arr_channels, scr_mid_left=arr_dino,
+    np.savez_compressed(out_npz, scr_left=arr_drone, scr_mid_left=arr_dino,
                         scr_mid_right=arr_dino_sim, scr_right=arr_right)
-    print(f"[CACHE] Built Buddha B-roll CRT loops: {out_npz} ({os.path.getsize(out_npz) / 1024 / 1024:.2f} MB)")
+    print(f"[CACHE] Built dinosaur aerial / field / analog CRT loops: {out_npz} ({os.path.getsize(out_npz) / 1024 / 1024:.2f} MB)")
     return out_npz
 
 
