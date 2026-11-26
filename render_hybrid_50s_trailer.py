@@ -26,11 +26,22 @@ FINAL_MP4 = os.path.join(OUT_DIR, "SHE_Teaser_50s_Hybrid_1080p.mp4")
 AUDIO_WAV = os.path.join(os.path.dirname(__file__), "She.wav")
 
 
+_BG96_PATH = os.path.join(os.path.dirname(__file__), "vendor", "gemini-watermark-remover", "assets", "bg_96.png")
+
+
 def _load_flow_clip(filename, target_frames, grade_t=30.0, skip_start=0):
     path = os.path.join(FLOW_DIR, filename)
     cap = cv2.VideoCapture(path)
     if not cap.isOpened():
         raise RuntimeError(f"Could not open Flow clip: {path}")
+
+    alpha_48 = None
+    wm_pos = None
+    if os.path.exists(_BG96_PATH):
+        bg = cv2.imread(_BG96_PATH)
+        if bg is not None:
+            alpha_48 = cv2.resize(np.max(bg, axis=2).astype(np.float32) / 255.0, (48, 48), interpolation=cv2.INTER_AREA)
+
     raw = []
     idx_f = 0
     while True:
@@ -42,16 +53,20 @@ def _load_flow_clip(filename, target_frames, grade_t=30.0, skip_start=0):
             continue
         idx_f += 1
         h, w = bgr.shape[:2]
-        # Remove the Gemini/Flow 4-point sparkle watermark in the bottom-right corner
-        wm_y0, wm_y1 = int(h * 0.85), int(h * 0.98)
-        wm_x0, wm_x1 = int(w * 0.90), int(w * 0.99)
-        roi = bgr[wm_y0:wm_y1, wm_x0:wm_x1]
-        gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-        med = float(np.median(gray))
-        wm_mask = ((gray > med + 18) | (gray > 145)).astype(np.uint8) * 255
-        wm_mask = cv2.dilate(wm_mask, np.ones((7, 7), np.uint8), iterations=1)
-        if np.any(wm_mask):
-            bgr[wm_y0:wm_y1, wm_x0:wm_x1] = cv2.inpaint(roi, wm_mask, 5, cv2.INPAINT_TELEA)
+        # Reverse alpha-blending (ishara-madu/gemini-watermark-remover)
+        if alpha_48 is not None:
+            if wm_pos is None:
+                g0 = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY).astype(np.float32)
+                rx0, ry0 = int(w * 0.78), int(h * 0.72)
+                res = cv2.matchTemplate(g0[ry0:h, rx0:w], (alpha_48 * 255.0).astype(np.float32), cv2.TM_CCOEFF_NORMED)
+                _, mv, _, ml = cv2.minMaxLoc(res)
+                wm_pos = (rx0 + ml[0], ry0 + ml[1]) if mv > 0.6 else (1136, 576)
+            wx, wy = wm_pos
+            if wx + 48 <= w and wy + 48 <= h:
+                patch = bgr[wy : wy + 48, wx : wx + 48].astype(np.float32)
+                a = np.clip(alpha_48 * 0.52, 0.0, 0.99)[..., None]
+                rec = np.where(a >= 0.002, (patch - a * 255.0) / np.maximum(1e-4, 1.0 - a), patch)
+                bgr[wy : wy + 48, wx : wx + 48] = np.clip(np.round(rec), 0, 255).astype(np.uint8)
         rgb = cv2.cvtColor(cv2.resize(bgr, (WIDTH, HEIGHT), interpolation=cv2.INTER_LANCZOS4), cv2.COLOR_BGR2RGB)
         graded = grade.crystal_nocturne(rgb.astype(np.float32), grade_t, intensity_override=0.35)
         raw.append(np.clip(graded, 0, 255).astype(np.uint8))
