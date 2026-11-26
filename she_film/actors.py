@@ -280,11 +280,11 @@ def snow(frame, plates, t, amount, moon_body, ship_body):
 
 
 MUSHROOM_STANDS = [
-    (340, 24.0, 0.75),   # Stand 0: Leftmost Stand (starts wave, x=340)
-    (640, 20.0, 1.15),   # Stand 1: Hero Center-Left Stand (x=640)
-    (980, 28.0, 0.70),   # Stand 2: Center-Right Stand (x=980)
-    (1260, 50.0, 1.15),  # Stand 3: 4th Mushroom (Hero East Stand, x=1260) - becomes larger and holds
-    (1540, 54.0, 0.65),  # Stand 4: Far East Stand (x=1540)
+    (340, 24.0, 0.75),   # Left shelf: smaller, set back
+    (640, 20.0, 1.00),   # Mid-left hero: canonical mature scale
+    (980, 28.0, 0.70),   # Center-right shelf: smaller, set back
+    (1260, 50.0, 1.00),  # East hero: same canonical mature scale
+    (1540, 54.0, 0.65),  # Far shelf: smallest through depth perspective
 ]
 MUSHROOM_HOLD_INDICES = (2, 3)  # Both Stand 2 and Stand 3 (4th mushroom) reach mature size and hold permanently
 MUSHROOM_GROWTH_SECONDS = 8.0
@@ -345,21 +345,20 @@ def _drone_swell_strength(audio_feats, t):
 
 
 def _parasympathetic_swell_mod(t, audio_feats=None):
-    """Headspace-style parasympathetic exhale coupled tightly to drone swells
-    across all mushroom appearances, with a deep 0.68x release at 1m53s–2m01s."""
+    """Restrained, phrase-led mushroom breathing driven by the low drone bed."""
     swell_drive = _drone_swell_strength(audio_feats, t)
-    h_audio = 1.0 - 0.22 * swell_drive
-    w_audio = 1.0 - 0.07 * swell_drive
+    h_audio = 0.96 + 0.04 * swell_drive
+    w_audio = 0.985 + 0.015 * swell_drive
 
     if 113.0 <= t <= 125.0:
         if t < 121.5:
             p = smooth((t - 113.0) / 8.5)
-            h_explicit = 1.0 - 0.32 * p
-            w_explicit = 1.0 - 0.10 * p
+            h_explicit = 1.0 - 0.06 * p
+            w_explicit = 1.0 - 0.02 * p
         else:
             r = smooth((t - 121.5) / 3.5)
-            h_explicit = 0.68 + 0.32 * r
-            w_explicit = 0.90 + 0.10 * r
+            h_explicit = 0.94 + 0.06 * r
+            w_explicit = 0.98 + 0.02 * r
         return min(h_audio, h_explicit), min(w_audio, w_explicit)
 
     return h_audio, w_audio
@@ -407,7 +406,7 @@ def _get_active_mushroom_stands(plates, t):
             base_raw = mushroom_target_frame(vs_growth, age)
             base_fade = 1.0
         else:
-            phase = (8.0 - wave_delay + max(0.0, age - 8.0) * 0.45) % 16.0
+            phase = (8.0 - wave_delay * 0.28 + max(0.0, age - 8.0) * 0.30) % 16.0
             idle_t = phase if phase <= 8.0 else 16.0 - phase
             base_raw = vs_idle.get_frame(idle_t, loop=False)
             base_fade = 1.0
@@ -629,8 +628,8 @@ FOREST_DEPTH_VISIBILITY = (0.96, 1.0, 0.96, 0.94, 0.90)
 FOREST_REFLECTION_VISIBILITY = (0.12, 0.16, 0.035, 0.03, 0.05)
 FOREST_REFLECTION_HEIGHT = (0.38, 0.45, 0.25, 0.23, 0.26)
 FOREST_GROUND_MARGIN = 18
-FOREST_EMERGENCE_DELAY = (0.44, 0.72, 0.0, 0.10, 0.26)
-FOREST_EMERGENCE_DURATION = 0.15
+FOREST_EMERGENCE_DELAY = (0.24, 0.36, 0.0, 0.08, 0.16)
+FOREST_EMERGENCE_DURATION = 0.52
 
 
 def forest_ground_y(plates, index):
@@ -672,8 +671,8 @@ def forest_emergence_alpha(t, index):
     return float(smooth(float(local)))
 
 
-def _tree_wind_and_contact(sprite, t, tree_x, tree_index, tree_depth):
-    """Apply gradual 5m52s (352s) wind-chill leaf flutter and dinosaur-brush physics.
+def _tree_wind_and_contact(sprite, t, tree_x, tree_index, tree_depth, audio_feats=None):
+    """Apply slow, phrase-led crown sway and dinosaur-brush physics.
 
     Roots at the bottom remain pinned (displacement = 0) while upper leaves
     flutter in the breeze and mid/lower foliage bends elastically when passing
@@ -681,7 +680,13 @@ def _tree_wind_and_contact(sprite, t, tree_x, tree_index, tree_depth):
     """
     # Keep the 3rd (middle, index=2) pine tree completely still in the wind
     # where the Buddha face appears in the transition.
-    wind_strength = 0.0 if tree_index == 2 else (smooth((t - 344.0) / 18.0) if t >= 344.0 else 0.0)
+    # Let the wind arrive with the firs, then travel gently across the grove.
+    # The hero tree at index 2 stays still for the Buddha transition.
+    wind_strength = 0.0 if tree_index == 2 else smooth((t - 184.0) / 12.0)
+    if tree_index != 2 and t >= 184.0:
+        wind_strength *= 0.78 + 0.22 * _drone_swell_strength(
+            audio_feats, t
+        )
 
     # Check proximity to any dinosaur in the caravan for physical brush interaction
     dino_push = 0.0
@@ -702,19 +707,23 @@ def _tree_wind_and_contact(sprite, t, tree_x, tree_index, tree_depth):
     # Lock the bottom 6% of rows so root grounding never shifts
     pin = np.clip((v - 0.04) / 0.12, 0.0, 1.0)
 
-    dx_row = np.zeros((h, 1), dtype=np.float32)
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+    dx_field = np.zeros((h, w), dtype=np.float32)
     if wind_strength >= 0.005:
-        gust = math.sin(t * 1.9 + tree_x * 0.005) + 0.45 * math.sin(t * 3.7 - tree_x * 0.008)
-        rows = np.arange(h, dtype=np.float32)[:, None]
-        leaf_flutter = np.sin(rows * 0.085 - t * 6.8 + tree_index * 1.4) * 0.42
-        dx_row += wind_strength * (6.0 * gust * (v ** 1.5) + 2.6 * leaf_flutter * (v ** 1.05)) * pin
+        # Keep the central trunk steady; apply gentle, silky flutter to outer leaves/branches only
+        trunk_dist = np.abs(xx - w * 0.5) / max(1.0, w * 0.5)
+        leaf_mask = np.clip((trunk_dist - 0.14) / 0.32, 0.0, 1.0)
+        gust = math.sin(t * (math.tau / 10.5) + tree_x * 0.005) + 0.25 * math.sin(t * 0.58 - tree_x * 0.008)
+        leaf_flutter = np.sin(yy * 0.055 - t * 2.6 + xx * 0.025 + tree_index * 1.4)
+        crown_lean = 1.1 * gust * (v ** 1.6)
+        breeze_leaves = 2.6 * leaf_flutter * leaf_mask * (v ** 0.9)
+        dx_field += wind_strength * (crown_lean + breeze_leaves) * pin
 
     if abs(dino_push) >= 0.05:
         contact_profile = np.exp(-0.5 * ((v - 0.36) / 0.28) ** 2) * pin
-        dx_row += dino_push * contact_profile
+        dx_field += dino_push * contact_profile
 
-    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
-    map_x = (xx - dx_row).astype(np.float32)
+    map_x = (xx - dx_field).astype(np.float32)
     return cv2.remap(sprite, map_x, yy, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0, 0))
 
 
@@ -778,7 +787,7 @@ def forest(frame, plates, t, presence, decay=0.0, depth_layers=None, respect_rid
                 blend_decay = smooth(decay / 0.22)
                 sprite = sprite * (1.0 - blend_decay) + d_resized * blend_decay
 
-        sprite = _tree_wind_and_contact(sprite, t, x, index, depth)
+        sprite = _tree_wind_and_contact(sprite, t, x, index, depth, plates.get("audio_feats"))
         if index == 0:
             # Subtle portrait depth-of-field blur on nearest foreground tree with large angular diameter
             sprite[:, :, :3] = cv2.GaussianBlur(sprite[:, :, :3], (5, 5), 1.25)
@@ -920,7 +929,7 @@ def forest_reflect(frame, plates, t, presence, decay=0.0, stillness=0.0):
                 dr = cv2.resize(df.astype(np.float32), (w, h), interpolation=cv2.INTER_LINEAR)
                 bd = smooth(decay / 0.22)
                 src_for_ref = src_for_ref * (1.0 - bd) + dr * bd
-        ref_src = _tree_wind_and_contact(src_for_ref, t, x, index, FOREST_GROUND_LAYERS[index])
+        ref_src = _tree_wind_and_contact(src_for_ref, t, x, index, FOREST_GROUND_LAYERS[index], plates.get("audio_feats"))
         ref_scale = emerge_p if growing else max(0.25, 1.0 - 0.62 * decay)
         ref_h = max(6, int(h * FOREST_REFLECTION_HEIGHT[index] * ref_scale))
         ref_w = max(8, int(w * (0.70 + 0.30 * emerge_p if growing else 1.0 - 0.22 * decay)))
@@ -1098,6 +1107,24 @@ def ridge_elevation_y(x):
     return HORIZON - 16.0 - (ridge + wave)
 
 
+def _draw_soft_dino_shadow(frame, cx, cy, rx, ry, shadow_tint, opacity=0.42):
+    """Draw a single soft, feathered ground shadow from the singular light source."""
+    rx = max(12, int(rx))
+    ry = max(4, int(ry))
+    pad = max(8, int(ry * 1.2))
+    mw, mh = (rx + pad) * 2 + 1, (ry + pad) * 2 + 1
+    mask = np.zeros((mh, mw), dtype=np.float32)
+    cv2.ellipse(mask, (rx + pad, ry + pad), (rx, ry), 0, 0, 360, 1.0, -1)
+    mask = cv2.GaussianBlur(mask, (0, 0), max(2.5, ry * 0.65))
+    x0, y0 = int(cx) - (rx + pad), int(cy) - (ry + pad)
+    dx0, dy0 = max(0, x0), max(0, y0)
+    dx1, dy1 = min(WIDTH, x0 + mw), min(HORIZON, y0 + mh)
+    if dx1 > dx0 and dy1 > dy0:
+        patch = mask[dy0 - y0:dy1 - y0, dx0 - x0:dx1 - x0, None] * opacity
+        tint = np.asarray(shadow_tint, dtype=np.float32)
+        frame[dy0:dy1, dx0:dx1] += (tint - frame[dy0:dy1, dx0:dx1]) * patch
+
+
 def beasts(frame, plates, herd, t=0.0):
     if not herd:
         return
@@ -1121,14 +1148,11 @@ def beasts(frame, plates, herd, t=0.0):
             
             if hero_spr is not None:
                 hw, hh = hero_spr.shape[1], hero_spr.shape[0]
-                # Ground contact shadow under feet deepens subtly on rhythmic piano accents
-                shad_rx = int(115 * (1.0 + 0.12 * piano_onset))
-                shad_ry = int(12 * (1.0 + 0.14 * piano_onset))
-                _, _, shadow_tint = _celestial_shadow(x, t)
-                cv2.ellipse(frame, (int(x), int(ground)), (shad_rx, shad_ry), 0, 0, 360, shadow_tint, -1, cv2.LINE_AA)
-                # Dynamic long slanting shadow downward towards ocean water edge
-                shadow_dx, shadow_dy, _ = _celestial_shadow(x, t, scale=1.0)
-                cv2.ellipse(frame, (int(x + shadow_dx), int(ground + shadow_dy)), (int(shad_rx * 1.25), int(shad_ry * 1.6)), -12, 0, 360, shadow_tint, -1, cv2.LINE_AA)
+                # Single soft ground shadow aligned to the singular sun/moon vector
+                shad_rx = int(120 * (1.0 + 0.08 * piano_onset))
+                shad_ry = int(13 * (1.0 + 0.10 * piano_onset))
+                shadow_dx, shadow_dy, shadow_tint = _celestial_shadow(x, t, scale=0.45)
+                _draw_soft_dino_shadow(frame, x + shadow_dx, ground + shadow_dy * 0.35, shad_rx, shad_ry, shadow_tint, opacity=0.44)
                 sy = ground - hh + 6
                 over(frame, hero_spr, x - hw / 2, sy, 0.98 * _edge_presence(x, hw))
                 
@@ -1141,8 +1165,8 @@ def beasts(frame, plates, herd, t=0.0):
                             cv2.circle(frame, (lx, ly), 2, (75, 138, 55), -1)
             else:
                 sprite_y = ground - 280 + 4
-                _, _, shadow_tint = _celestial_shadow(x, t)
-                cv2.ellipse(frame, (int(x + 10), int(ground)), (140, 14), 0, 0, 360, shadow_tint, -1, cv2.LINE_AA)
+                shadow_dx, shadow_dy, shadow_tint = _celestial_shadow(x, t, scale=0.45)
+                _draw_soft_dino_shadow(frame, x + 10 + shadow_dx, ground + shadow_dy * 0.35, 140, 14, shadow_tint, opacity=0.44)
                 _draw_grazing_sauropod(frame, x - 250, sprite_y, neck_bend, t)
         else:
             # Trailing species: Hadrosaur (1), Ankylosaur (2), Raptor (3)
@@ -1159,11 +1183,10 @@ def beasts(frame, plates, herd, t=0.0):
                 sprite = forms[d_id % len(forms)]
             sw, sh = sprite.shape[1], sprite.shape[0]
             sy = ground - sh + 5
-            # Foot contact shadow permanently sized to this exact species
-            shad_r = int(sw * 0.32 * (1.0 + 0.1 * piano_onset))
-            shadow_dx, shadow_dy, shadow_tint = _celestial_shadow(x, t, scale=min(1.0, sw / 160.0))
-            cv2.ellipse(frame, (int(x), int(ground)), (shad_r, 8), 0, 0, 360, shadow_tint, -1, cv2.LINE_AA)
-            cv2.ellipse(frame, (int(x + shadow_dx), int(ground + shadow_dy)), (int(shad_r * 1.15), 11), -10, 0, 360, shadow_tint, -1, cv2.LINE_AA)
+            # Single soft ground shadow sized to this species along the singular light vector
+            shad_r = int(sw * 0.34 * (1.0 + 0.08 * piano_onset))
+            shadow_dx, shadow_dy, shadow_tint = _celestial_shadow(x, t, scale=min(0.45, sw / 360.0))
+            _draw_soft_dino_shadow(frame, x + shadow_dx, ground + shadow_dy * 0.35, shad_r, 9, shadow_tint, opacity=0.42)
             over(frame, sprite, x - sw / 2, sy, 0.96 * _edge_presence(x, sw))
 
 
@@ -1219,9 +1242,10 @@ def beasts_reflect(frame, plates, herd, t=0.0, stillness=0.0):
                 sun_visibility = (day * smooth((sun_body[1] + 12.0) / 30.0)
                                   if sun_body is not None else 0.0)
                 
-                # Heightened opacity at night so reflection stands out boldly against dark sea
-                top_fade = lerp(0.50, 0.88, night_factor) + 0.10 * float(stillness)
-                bot_fade = lerp(0.02, 0.22, night_factor)
+                # Water images stay subordinate to the animal: reflected light
+                # is broad and soft, never a second crisp dinosaur silhouette.
+                top_fade = lerp(0.30, 0.88, night_factor) + 0.035 * float(stillness)
+                bot_fade = lerp(0.01, 0.10, night_factor)
                 fade = np.linspace(top_fade, bot_fade, max_ref_h, dtype=np.float32)[:, None, None]
                 
                 ref_sprite = spr[:max_ref_h][::-1].copy()
@@ -1229,9 +1253,9 @@ def beasts_reflect(frame, plates, herd, t=0.0, stillness=0.0):
                 
                 # In daylight: warm amber-teal tint; At night: luminous moonlit silvery-blue radiance
                 # Guaranteeing dinosaurs' reflections are vividly visible on the ocean
-                r_add = 12.0 + 12.0 * sun_visibility + 42.0 * warm + 62.0 * night_factor + 8.0 * crimson(t)
-                g_add = 16.0 + 8.0 * sun_visibility + 22.0 * warm + 96.0 * night_factor + 5.0 * crimson(t)
-                b_add = 24.0 + 4.0 * sun_visibility + 8.0 * warm + 138.0 * night_factor + 14.0 * crimson(t)
+                r_add = 9.0 + 8.0 * sun_visibility + 24.0 * warm + 70.0 * night_factor + 5.0 * crimson(t)
+                g_add = 11.0 + 5.0 * sun_visibility + 14.0 * warm + 99.0 * night_factor + 3.0 * crimson(t)
+                b_add = 15.0 + 3.0 * sun_visibility + 6.0 * warm + 132.0 * night_factor + 8.0 * crimson(t)
                 
                 ref_sprite[:, :, 0] = np.clip(ref_sprite[:, :, 0] * 0.70 + r_add, 0, 255)
                 ref_sprite[:, :, 1] = np.clip(ref_sprite[:, :, 1] * 0.78 + g_add, 0, 255)
@@ -1244,7 +1268,10 @@ def beasts_reflect(frame, plates, herd, t=0.0, stillness=0.0):
                     ref_sprite, t, x, wave_factor, audio_feats, phase=d_id * 0.8, parallax=0.85
                 )
                 
-                eff_over_alpha = lerp(0.60, 0.88, night_factor)
+                # A slight blur gives the mirrored form a water-soft edge.
+                ref_sprite[:, :, :3] = cv2.GaussianBlur(ref_sprite[:, :, :3], (0, 0), 1.1)
+                ref_sprite[:, :, 3] = cv2.GaussianBlur(ref_sprite[:, :, 3], (0, 0), 1.2)
+                eff_over_alpha = lerp(0.46, 0.80, night_factor)
                 over(frame, ref_sprite, ref_x, ref_y, eff_over_alpha)
 
 
