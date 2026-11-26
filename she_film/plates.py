@@ -92,16 +92,25 @@ def _moon_sprite():
     return np.asarray(im)
 
 
-def _font(size, light=True):
+def _font(size, light=True, bold=False):
     # Cross-platform font resolution: Windows, Linux (Ubuntu/Colab), with scalable Pillow fallback
-    candidates = [
-        r"C:\Windows\Fonts\segoeuisl.ttf" if light else r"C:\Windows\Fonts\segoeui.ttf",
-        r"C:\Windows\Fonts\arial.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-        "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
-        "/usr/share/fonts/truetype/ubuntu/Ubuntu-R.ttf",
-    ]
+    if bold:
+        candidates = [
+            r"C:\Windows\Fonts\arialbd.ttf",
+            r"C:\Windows\Fonts\segoeuib.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+            "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+        ]
+    else:
+        candidates = [
+            r"C:\Windows\Fonts\segoeuisl.ttf" if light else r"C:\Windows\Fonts\segoeui.ttf",
+            r"C:\Windows\Fonts\arial.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+            "/usr/share/fonts/truetype/ubuntu/Ubuntu-R.ttf",
+        ]
     for p in candidates:
         if os.path.exists(p):
             try:
@@ -115,31 +124,45 @@ def _font(size, light=True):
 
 
 def _title_cards():
-    """Each line is its own plate. The rule is a separate plate so it can lead."""
+    """Create individually timed, supersampled title plates unified with the teaser's
+    warm champagne-gold (#F4CE82) bold tracked typography and diamond hairline motif."""
+    gold = (244, 206, 130, 255)
+    ivory = (252, 238, 205, 255)
+    shadow = (6, 8, 12, 230)
+    rule_col = (224, 190, 127, 220)
+    diamond_col = (245, 222, 175, 255)
+
     specs = [
-        ("BETWEEN  THE  NOTES  PRESENTS", 26, (138, 42, 28, 255), (186, 72, 52, 255), 188, True),
-        ("S    H    E", 96, (255, 244, 218, 255), None, 268, False),
-        ("A FILM SET TO THE COMPOSITION BY DRONE WATCH", 24, (36, 24, 18, 255), (168, 64, 42, 210), 352, True),
-        ("ORIGINAL SOUND    ATANDRA CHAKRABORTY (BURO)", 22, (28, 24, 20, 255), None, 408, False),
-        ("CINEMA  AND  DIRECTION    SAYAN BHATTACHARYA", 22, (28, 24, 20, 255), None, 442, False),
-        ("VIDEO PRODUCED BY SAYAN BHATTACHARYA", 22, (28, 24, 20, 255), None, 476, False),
+        ("BETWEEN  THE  NOTES  PRESENTS", 24, gold, rule_col, 188, True),
+        ("S   H   E", 92, gold, None, 266, False),
+        ("COMPOSITION BY DRONE WATCH", 23, gold, rule_col, 354, True),
+        ("ORIGINAL SOUND BY ATANDRA CHAKRABORTY (BURO)", 21, ivory, None, 410, False),
+        ("CINEMA  AND  DIRECTION    SAYAN BHATTACHARYA", 21, ivory, None, 444, False),
+        ("VIDEO PRODUCED BY SAYAN BHATTACHARYA", 21, ivory, None, 478, False),
     ]
     cards = []
     for text, size, fill, rule, y, _ruled in specs:
-        font = _font(size)
+        scale = 2
+        font = _font(size * scale, light=False, bold=True)
         probe = ImageDraw.Draw(Image.new("RGB", (8, 8)))
         box = probe.textbbox((0, 0), text, font=font)
         tw, th = box[2] - box[0], box[3] - box[1]
-        pad = 8
+        pad = 20
         words = Image.new("RGBA", (tw + pad * 2, th + pad * 2), (0, 0, 0, 0))
-        ImageDraw.Draw(words).text((pad - box[0], pad - box[1]), text, font=font, fill=fill)
+        d = ImageDraw.Draw(words)
+        d.text((pad - box[0] + 5, pad - box[1] + 5), text, font=font, fill=shadow)
+        d.text((pad - box[0], pad - box[1]), text, font=font, fill=fill)
+        words = words.resize((max(1, words.width // scale), max(1, words.height // scale)), Image.Resampling.LANCZOS)
         line = None
         if rule is not None:
-            span = tw if _ruled else 240
-            line = Image.new("RGBA", (span + pad * 2, 8), (0, 0, 0, 0))
-            ImageDraw.Draw(line).rectangle([pad, 2, pad + span, 5], fill=rule)
+            span = max(280, (tw // scale))
+            line = Image.new("RGBA", (span + 24, 16), (0, 0, 0, 0))
+            ld = ImageDraw.Draw(line)
+            cx = (span + 24) // 2
+            ld.line((12, 8, 12 + span, 8), fill=rule, width=2)
+            ld.polygon([(cx, 3), (cx + 5, 8), (cx, 13), (cx - 5, 8)], fill=diamond_col)
             line = np.asarray(line)
-        cards.append((np.asarray(words), line, 960 - (tw + pad * 2) / 2, y - th / 2))
+        cards.append((np.asarray(words), line, 960 - words.width / 2, y - words.height / 2))
     return cards
 
 
@@ -577,14 +600,6 @@ def _logo():
     return np.asarray(im)
 
 
-def _stripes():
-    im = Image.new("RGBA", (WIDTH, HORIZON), (0, 0, 0, 0))
-    d = ImageDraw.Draw(im)
-    for y in range(48, HORIZON - 70, 18):
-        d.rectangle([1668, y, 1864, y + 8], fill=(32, 148, 168, 170))
-    return np.asarray(im)
-
-
 def _vignette():
     yy = np.linspace(-1.0, 1.05, HEIGHT, dtype=np.float32)[:, None]
     xx = np.linspace(-1.0, 1.0, WIDTH, dtype=np.float32)[None, :]
@@ -699,7 +714,6 @@ def load():
         "face_meditating": _face_meditating(),
         "face_awake": _face_awake(),
         "logo": _logo(),
-        "stripes": _stripes(),
         "vignette": _vignette(),
         "outro_card": build_outro_card(LOGO_PATH),
         "stars": (
@@ -726,7 +740,6 @@ def load():
     plates["logo"] = _rgba(plates["logo"])
     plates["buddha"] = _rgba(plates["buddha"])
     plates["nebula"] = _rgba(plates["nebula"])
-    plates["stripes"] = _crop_rgba(plates["stripes"])
     packed = []
     for words, rule, x, y in plates["titles"]:
         packed.append((_rgba(words), None if rule is None else _rgba(rule), x, y))
