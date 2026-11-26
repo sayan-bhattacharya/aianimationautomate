@@ -539,7 +539,8 @@ def render(plates, t):
 
     for (rule_a, text_a), (words, rule, x, y) in zip(title_lines(t), plates["titles"]):
         if rule is not None and rule_a > 0.02:
-            actors.over(frame, rule, x + (words.shape[1] - rule.shape[1]) / 2, y + words.shape[0] - 2, rule_a)
+            ry = 169.0 if rule.shape[0] == 1 else (y + words.shape[0] - 2)
+            actors.over(frame, rule, x + (words.shape[1] - rule.shape[1]) / 2, ry, rule_a)
         if text_a > 0.02:
             actors.over(frame, words, x, y, text_a)
 

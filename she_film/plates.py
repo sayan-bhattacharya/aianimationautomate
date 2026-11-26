@@ -123,62 +123,99 @@ def _font(size, light=True, bold=False):
         return ImageFont.load_default()
 
 
-def _title_cards():
-    """Create individually timed, supersampled title plates with refined editorial weight
-    (Semilight/Regular, never chunky bold) and a soft feathered dark halo so warm
-    champagne-ivory (#FFECC0 / #FFF8E8) stands out cleanly against the bright sunrise sky."""
-    champagne = (255, 238, 194, 255)
-    she_gold = (255, 230, 168, 255)
-    ivory = (255, 248, 232, 255)
-    shadow_soft = (10, 12, 16, 175)
-    shadow_crisp = (10, 12, 16, 215)
-    rule_col = (245, 218, 162, 230)
-    diamond_col = (255, 240, 200, 255)
+def _load_editorial_font(family, size, weight=400):
+    """Load real Cormorant Garamond / Manrope fonts with variable weight support."""
+    fonts_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
+    if family == "cormorant":
+        candidates = [
+            os.path.join(fonts_dir, "CormorantGaramond-Medium.ttf"),
+            r"C:\Windows\Fonts\georgia.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
+        ]
+    else:
+        candidates = [
+            os.path.join(fonts_dir, "Manrope-Variable.ttf"),
+            r"C:\Windows\Fonts\segoeuisl.ttf" if weight <= 350 else r"C:\Windows\Fonts\segoeui.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        ]
+    for p in candidates:
+        if os.path.exists(p):
+            try:
+                f = ImageFont.truetype(p, size)
+                try:
+                    f.set_variation_by_axes([weight])
+                except Exception:
+                    pass
+                return f
+            except Exception:
+                continue
+    return _font(size, light=(weight <= 350))
 
-    # (text, size, fill, rule, y, _ruled, light_weight)
+
+def _render_tracked_line(text, font, fill_rgba, tracking_px, shadow_rgba=(23, 35, 38, 36)):
+    """Render a centered, properly kerned & tracked line at supersampled resolution
+    with subtle #172326 shadow (14% opacity, 3.5px blur, +1.5px Y offset)."""
+    scale = 2
+    probe = ImageDraw.Draw(Image.new("RGB", (8, 8)))
+    widths = [probe.textlength(ch, font=font) for ch in text]
+    tw = int(sum(widths) + tracking_px * scale * max(0, len(text) - 1))
+    # Measure ascent/descent cleanly via anchor='ls' (left-baseline)
+    bbox = probe.textbbox((0, 0), text, font=font, anchor="ls")
+    ascent = -bbox[1]
+    descent = bbox[3]
+    pad = 24
+    cw = tw + pad * 2
+    ch = ascent + descent + pad * 2
+    baseline_in_plate = pad + ascent
+
+    shadow_img = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
+    sd = ImageDraw.Draw(shadow_img)
+    x = float(pad)
+    for glyph, w in zip(text, widths):
+        sd.text((x, baseline_in_plate + 1.5 * scale), glyph, font=font, fill=shadow_rgba, anchor="ls")
+        x += w + tracking_px * scale
+    shadow_img = shadow_img.filter(ImageFilter.GaussianBlur(radius=3.5 * scale))
+
+    fg_img = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
+    fd = ImageDraw.Draw(fg_img)
+    x = float(pad)
+    for glyph, w in zip(text, widths):
+        fd.text((x, baseline_in_plate), glyph, font=font, fill=fill_rgba, anchor="ls")
+        x += w + tracking_px * scale
+
+    combined = Image.alpha_composite(shadow_img, fg_img)
+    out = combined.resize((max(1, cw // scale), max(1, ch // scale)), Image.Resampling.LANCZOS)
+    return out, baseline_in_plate / float(scale)
+
+
+def _title_cards():
+    """SHE — Final Opening Title & Credit Design Specification (1920x1080):
+    - Deep ink teal (#26383C) SHE in Cormorant Garamond Medium (112px, 0.22em)
+    - Graphite teal (#39494A) Manrope Medium/Light credits
+    - Subtle 1px divider (#39494A @ 35%) at Y=169, X=790..1130
+    - No background panels, no overlays, no champagne/yellow text.
+    """
+    ink_teal = (38, 56, 60, 255)        # #26383C
+    graphite_teal = (57, 73, 74, 255)   # #39494A
+    divider_col = (57, 73, 74, 89)      # #39494A @ 35%
+
     specs = [
-        ("BETWEEN  THE  NOTES  PRESENTS", 24, champagne, rule_col, 188, True, True),
-        ("S   H   E", 92, she_gold, None, 266, False, False),
-        ("COMPOSITION BY DRONE WATCH", 23, champagne, rule_col, 354, True, True),
-        ("ORIGINAL SOUND BY ATANDRA CHAKRABORTY (BURO)", 21, ivory, None, 410, False, True),
-        ("CINEMA  AND  DIRECTION    SAYAN BHATTACHARYA", 21, ivory, None, 444, False, True),
-        ("VIDEO PRODUCED BY SAYAN BHATTACHARYA", 21, ivory, None, 478, False, True),
+        ("BETWEEN THE NOTES PRESENTS", "manrope", 18, 500, 0.075, graphite_teal, 145, True),
+        ("SHE", "cormorant", 112, 500, 0.22, ink_teal, 270, False),
+        ("COMPOSITION BY DRONE WATCH", "manrope", 20, 300, 0.055, graphite_teal, 325, False),
+        ("ORIGINAL SOUND BY ATANDRA CHAKRABORTY (BURO)", "manrope", 20, 300, 0.055, graphite_teal, 355, False),
+        ("CINEMA & DIRECTION — SAYAN BHATTACHARYA", "manrope", 20, 300, 0.055, graphite_teal, 385, False),
+        ("VIDEO PRODUCTION — SAYAN BHATTACHARYA", "manrope", 20, 300, 0.055, graphite_teal, 415, False),
     ]
     cards = []
-    for text, size, fill, rule, y, _ruled, is_light in specs:
-        scale = 2
-        font = _font(size * scale, light=is_light, bold=False)
-        probe = ImageDraw.Draw(Image.new("RGB", (8, 8)))
-        box = probe.textbbox((0, 0), text, font=font)
-        tw, th = box[2] - box[0], box[3] - box[1]
-        pad = 28
-        # Soft atmospheric halo behind the thin/regular strokes for sunrise contrast
-        halo = Image.new("RGBA", (tw + pad * 2, th + pad * 2), (0, 0, 0, 0))
-        hd = ImageDraw.Draw(halo)
-        hd.text((pad - box[0] + 2, pad - box[1] + 3), text, font=font, fill=shadow_soft,
-                stroke_width=4, stroke_fill=shadow_soft)
-        halo = halo.filter(ImageFilter.GaussianBlur(radius=7))
-
-        words = Image.new("RGBA", (tw + pad * 2, th + pad * 2), (0, 0, 0, 0))
-        d = ImageDraw.Draw(words)
-        d.text((pad - box[0] + 3, pad - box[1] + 3), text, font=font, fill=shadow_crisp)
-        d.text((pad - box[0], pad - box[1]), text, font=font, fill=fill)
-        combined = Image.alpha_composite(halo, words)
-        combined = combined.resize(
-            (max(1, combined.width // scale), max(1, combined.height // scale)),
-            Image.Resampling.LANCZOS,
-        )
-        line = None
-        if rule is not None:
-            span = max(280, (tw // scale))
-            line = Image.new("RGBA", (span + 24, 16), (0, 0, 0, 0))
-            ld = ImageDraw.Draw(line)
-            cx = (span + 24) // 2
-            ld.line((12, 9, 12 + span, 9), fill=(10, 12, 16, 150), width=2)
-            ld.line((12, 8, 12 + span, 8), fill=rule, width=1)
-            ld.polygon([(cx, 3), (cx + 5, 8), (cx, 13), (cx - 5, 8)], fill=diamond_col)
-            line = np.asarray(line)
-        cards.append((np.asarray(combined), line, 960 - combined.width / 2, y - combined.height / 2))
+    for text, family, size, weight, em_track, fill, baseline_y, has_divider in specs:
+        font = _load_editorial_font(family, size * 2, weight=weight)
+        plate, bl_offset = _render_tracked_line(text, font, fill, tracking_px=size * em_track)
+        rule = None
+        if has_divider:
+            rule = Image.new("RGBA", (340, 1), divider_col)
+            rule = np.asarray(rule)
+        cards.append((np.asarray(plate), rule, 960.0 - plate.width / 2.0, float(baseline_y) - bl_offset))
     return cards
 
 
