@@ -124,45 +124,61 @@ def _font(size, light=True, bold=False):
 
 
 def _title_cards():
-    """Create individually timed, supersampled title plates unified with the teaser's
-    warm champagne-gold (#F4CE82) bold tracked typography and diamond hairline motif."""
-    gold = (244, 206, 130, 255)
-    ivory = (252, 238, 205, 255)
-    shadow = (6, 8, 12, 230)
-    rule_col = (224, 190, 127, 220)
-    diamond_col = (245, 222, 175, 255)
+    """Create individually timed, supersampled title plates with refined editorial weight
+    (Semilight/Regular, never chunky bold) and a soft feathered dark halo so warm
+    champagne-ivory (#FFECC0 / #FFF8E8) stands out cleanly against the bright sunrise sky."""
+    champagne = (255, 238, 194, 255)
+    she_gold = (255, 230, 168, 255)
+    ivory = (255, 248, 232, 255)
+    shadow_soft = (10, 12, 16, 175)
+    shadow_crisp = (10, 12, 16, 215)
+    rule_col = (245, 218, 162, 230)
+    diamond_col = (255, 240, 200, 255)
 
+    # (text, size, fill, rule, y, _ruled, light_weight)
     specs = [
-        ("BETWEEN  THE  NOTES  PRESENTS", 24, gold, rule_col, 188, True),
-        ("S   H   E", 92, gold, None, 266, False),
-        ("COMPOSITION BY DRONE WATCH", 23, gold, rule_col, 354, True),
-        ("ORIGINAL SOUND BY ATANDRA CHAKRABORTY (BURO)", 21, ivory, None, 410, False),
-        ("CINEMA  AND  DIRECTION    SAYAN BHATTACHARYA", 21, ivory, None, 444, False),
-        ("VIDEO PRODUCED BY SAYAN BHATTACHARYA", 21, ivory, None, 478, False),
+        ("BETWEEN  THE  NOTES  PRESENTS", 24, champagne, rule_col, 188, True, True),
+        ("S   H   E", 92, she_gold, None, 266, False, False),
+        ("COMPOSITION BY DRONE WATCH", 23, champagne, rule_col, 354, True, True),
+        ("ORIGINAL SOUND BY ATANDRA CHAKRABORTY (BURO)", 21, ivory, None, 410, False, True),
+        ("CINEMA  AND  DIRECTION    SAYAN BHATTACHARYA", 21, ivory, None, 444, False, True),
+        ("VIDEO PRODUCED BY SAYAN BHATTACHARYA", 21, ivory, None, 478, False, True),
     ]
     cards = []
-    for text, size, fill, rule, y, _ruled in specs:
+    for text, size, fill, rule, y, _ruled, is_light in specs:
         scale = 2
-        font = _font(size * scale, light=False, bold=True)
+        font = _font(size * scale, light=is_light, bold=False)
         probe = ImageDraw.Draw(Image.new("RGB", (8, 8)))
         box = probe.textbbox((0, 0), text, font=font)
         tw, th = box[2] - box[0], box[3] - box[1]
-        pad = 20
+        pad = 28
+        # Soft atmospheric halo behind the thin/regular strokes for sunrise contrast
+        halo = Image.new("RGBA", (tw + pad * 2, th + pad * 2), (0, 0, 0, 0))
+        hd = ImageDraw.Draw(halo)
+        hd.text((pad - box[0] + 2, pad - box[1] + 3), text, font=font, fill=shadow_soft,
+                stroke_width=4, stroke_fill=shadow_soft)
+        halo = halo.filter(ImageFilter.GaussianBlur(radius=7))
+
         words = Image.new("RGBA", (tw + pad * 2, th + pad * 2), (0, 0, 0, 0))
         d = ImageDraw.Draw(words)
-        d.text((pad - box[0] + 5, pad - box[1] + 5), text, font=font, fill=shadow)
+        d.text((pad - box[0] + 3, pad - box[1] + 3), text, font=font, fill=shadow_crisp)
         d.text((pad - box[0], pad - box[1]), text, font=font, fill=fill)
-        words = words.resize((max(1, words.width // scale), max(1, words.height // scale)), Image.Resampling.LANCZOS)
+        combined = Image.alpha_composite(halo, words)
+        combined = combined.resize(
+            (max(1, combined.width // scale), max(1, combined.height // scale)),
+            Image.Resampling.LANCZOS,
+        )
         line = None
         if rule is not None:
             span = max(280, (tw // scale))
             line = Image.new("RGBA", (span + 24, 16), (0, 0, 0, 0))
             ld = ImageDraw.Draw(line)
             cx = (span + 24) // 2
-            ld.line((12, 8, 12 + span, 8), fill=rule, width=2)
+            ld.line((12, 9, 12 + span, 9), fill=(10, 12, 16, 150), width=2)
+            ld.line((12, 8, 12 + span, 8), fill=rule, width=1)
             ld.polygon([(cx, 3), (cx + 5, 8), (cx, 13), (cx - 5, 8)], fill=diamond_col)
             line = np.asarray(line)
-        cards.append((np.asarray(words), line, 960 - words.width / 2, y - words.height / 2))
+        cards.append((np.asarray(combined), line, 960 - combined.width / 2, y - combined.height / 2))
     return cards
 
 
