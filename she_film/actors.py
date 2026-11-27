@@ -550,55 +550,69 @@ def life(frame, plates, t, alpha=1.0):
         spr, x, y, scale, a_fade, wave_delay = stand[:6]
         ground_y = stand[6] if len(stand) > 6 else HORIZON - 1
         
-        # Grounding Ambient Occlusion (AO) contact shadow directly joining stalk to sand
-        # Constrained vertically so it naturally tapers to zero without hard flat clipping
+        # Grounding Ambient Occlusion (AO) contact shadow with generous padding so GaussianBlur never clips to a box
         max_depth_to_water = max(2, HORIZON - 1 - ground_y)
-        ao_w = max(18, int(spr.shape[1] * 0.28))
-        ao_h = max(2, min(5, int(max_depth_to_water * 0.6)))
-        ao_mask = np.zeros((ao_h * 2 + 1, ao_w * 2 + 1), dtype=np.float32)
-        cv2.ellipse(ao_mask, (ao_w, ao_h), (ao_w, ao_h), 0, 0, 360, 1.0, -1)
-        ao_mask = cv2.GaussianBlur(ao_mask, (0, 0), max(1.0, ao_h * 0.6))
-        sy0 = max(0, ground_y - ao_h)
-        sy1 = min(HORIZON, ground_y + ao_h + 1)
-        sx0 = max(0, int(x + spr.shape[1] // 2) - ao_w)
-        sx1 = min(WIDTH, int(x + spr.shape[1] // 2) + ao_w + 1)
+        ao_w = max(18, int(spr.shape[1] * 0.26))
+        ao_h = max(2, min(5, int(max_depth_to_water * 0.5)))
+        ao_pad = max(12, ao_h * 3)
+        ao_mh, ao_mw = (ao_h + ao_pad) * 2 + 1, (ao_w + ao_pad) * 2 + 1
+        ao_mask = np.zeros((ao_mh, ao_mw), dtype=np.float32)
+        cv2.ellipse(ao_mask, (ao_w + ao_pad, ao_h + ao_pad), (ao_w, ao_h), 0, 0, 360, 1.0, -1)
+        ao_mask = cv2.GaussianBlur(ao_mask, (0, 0), max(1.5, ao_h * 0.8))
+        cx_m = int(x + spr.shape[1] // 2)
+        sy0 = max(0, ground_y - (ao_h + ao_pad))
+        sy1 = min(HORIZON, ground_y + (ao_h + ao_pad) + 1)
+        sx0 = max(0, cx_m - (ao_w + ao_pad))
+        sx1 = min(WIDTH, cx_m + (ao_w + ao_pad) + 1)
         if sy1 > sy0 and sx1 > sx0:
-            patch = ao_mask[sy0 - (ground_y - ao_h):sy1 - (ground_y - ao_h),
-                            sx0 - (int(x + spr.shape[1] // 2) - ao_w):sx1 - (int(x + spr.shape[1] // 2) - ao_w)]
-            ao_factor = 1.0 - patch * (0.35 * alpha * a_fade)
+            patch = ao_mask[sy0 - (ground_y - (ao_h + ao_pad)):sy1 - (ground_y - (ao_h + ao_pad)),
+                            sx0 - (cx_m - (ao_w + ao_pad)):sx1 - (cx_m - (ao_w + ao_pad))]
+            ao_factor = 1.0 - patch * (0.28 * alpha * a_fade)
             frame[sy0:sy1, sx0:sx1] = np.clip(
                 frame[sy0:sy1, sx0:sx1].astype(np.float32) * ao_factor[:, :, None],
                 0, 255
             ).astype(np.uint8)
 
-        # Clean bottom-edge rectangular pad fringe on mushroom sprite before compositing
+        # Clean baked-in flat studio pedestal/floor bar at bottom of mushroom sprite
         spr_clean = spr.copy()
-        sh_m = spr_clean.shape[0]
-        pad_rows = max(4, int(sh_m * 0.16))
-        a_bot = spr_clean[-pad_rows:, :, 3]
-        a_bot[a_bot < 0.16] = 0.0
-        feather_rows = max(3, int(sh_m * 0.05))
-        spr_clean[-feather_rows:, :, 3] *= np.linspace(1.0, 0.0, feather_rows, dtype=np.float32)[:, None]
+        sh_m, sw_m = spr_clean.shape[0], spr_clean.shape[1]
+        # Strip flat low-saturation floor/pedestal pixels in bottom 14%
+        pad_rows = max(8, int(sh_m * 0.14))
+        sub_m = spr_clean[-pad_rows:, :, :]
+        sat_m = np.max(sub_m[:, :, :3], axis=2) - np.min(sub_m[:, :, :3], axis=2)
+        luma_m = 0.114 * sub_m[:, :, 2] + 0.587 * sub_m[:, :, 1] + 0.299 * sub_m[:, :, 0]
+        is_pedestal = (sub_m[:, :, 3] < 0.78) | ((sat_m < 32.0) & (luma_m > 95.0))
+        sub_m[is_pedestal, 3] = 0.0
+        # Organic curved bottom fade (higher at outer edges, deeper in center) so no flat line ever appears
+        cx_norm = np.abs(np.linspace(-1.0, 1.0, sw_m, dtype=np.float32))[None, :]
+        feather_rows = max(6, int(sh_m * 0.08))
+        ry_norm = np.linspace(0.0, 1.0, feather_rows, dtype=np.float32)[:, None]
+        curve_mask = np.clip(1.0 - np.maximum(0.0, ry_norm - (1.0 - 0.45 * cx_norm)) * 2.5, 0.0, 1.0)
+        spr_clean[-feather_rows:, :, 3] *= curve_mask * (1.0 - ry_norm * 0.85)
 
-        # Capture live dune pixels BEFORE drawing sprite for dynamic ground occlusion
-        lip_w = max(18, int(spr_clean.shape[1] * 0.30))
-        lip_h = max(3, min(6, int(max_depth_to_water * 0.6)))
-        lx0 = max(0, int(x + spr_clean.shape[1] // 2) - lip_w)
-        lx1 = min(WIDTH, int(x + spr_clean.shape[1] // 2) + lip_w + 1)
-        ly0 = max(0, ground_y - lip_h)
-        ly1 = min(HORIZON, ground_y + lip_h + 1)
+        # Capture live dune pixels BEFORE drawing sprite for dynamic ground occlusion (padded mask)
+        lip_w = max(22, int(sw_m * 0.34))
+        lip_h = max(6, min(12, int(sh_m * 0.07)))
+        lip_pad = max(12, lip_h * 2)
+        lx0 = max(0, cx_m - (lip_w + lip_pad))
+        lx1 = min(WIDTH, cx_m + (lip_w + lip_pad) + 1)
+        ly0 = max(0, ground_y - (lip_h + lip_pad))
+        ly1 = min(HORIZON, ground_y + (lip_h + lip_pad) + 1)
         bg_dune = frame[ly0:ly1, lx0:lx1].copy() if (ly1 > ly0 and lx1 > lx0) else None
 
+        # Seat mushroom roots firmly into the sand after stripping the studio pedestal
+        y_draw = y + int(sh_m * 0.07)
+
         # Draw firmly grounded mushroom sprite
-        over(frame, spr_clean, x, y, alpha * a_fade)
+        over(frame, spr_clean, x, y_draw, alpha * a_fade)
 
         # Dynamic Live-Dune Occlusion Mask: blends the actual lit dune pixels back over root tips
         if bg_dune is not None:
-            lip_mask = np.zeros((lip_h * 2 + 1, lip_w * 2 + 1), dtype=np.float32)
-            cv2.ellipse(lip_mask, (lip_w, lip_h), (lip_w, lip_h), 0, 0, 360, 1.0, -1)
-            lip_mask = cv2.GaussianBlur(lip_mask, (0, 0), max(1.2, lip_h * 0.55))
-            patch = lip_mask[(ly0 - (ground_y - lip_h)):(ly1 - (ground_y - lip_h)),
-                             (lx0 - (int(x + spr_clean.shape[1] // 2) - lip_w)):(lx1 - (int(x + spr_clean.shape[1] // 2) - lip_w))]
+            lip_mask = np.zeros(((lip_h + lip_pad) * 2 + 1, (lip_w + lip_pad) * 2 + 1), dtype=np.float32)
+            cv2.ellipse(lip_mask, (lip_w + lip_pad, lip_h + lip_pad), (lip_w, lip_h), 0, 0, 360, 1.0, -1)
+            lip_mask = cv2.GaussianBlur(lip_mask, (0, 0), max(2.0, lip_h * 0.65))
+            patch = lip_mask[(ly0 - (ground_y - (lip_h + lip_pad))):(ly1 - (ground_y - (lip_h + lip_pad))),
+                             (lx0 - (cx_m - (lip_w + lip_pad))):(lx1 - (cx_m - (lip_w + lip_pad)))]
             blend_a = patch[:, :, None] * (0.85 * alpha * a_fade)
             frame_patch = frame[ly0:ly1, lx0:lx1].astype(np.float32)
             frame[ly0:ly1, lx0:lx1] = np.clip(frame_patch * (1.0 - blend_a) + bg_dune.astype(np.float32) * blend_a, 0, 255).astype(np.uint8)
@@ -850,11 +864,17 @@ def forest(frame, plates, t, presence, decay=0.0, depth_layers=None, respect_rid
                 sprite = cv2.resize(sprite, (bw, bh), interpolation=cv2.INTER_LINEAR)
                 soil_offset += h - bh
                 w, h = bw, bh
-        # Seat root base 5px into the soil and strip faint rectangular bounding-box pad fringes
-        pad_rows = max(4, int(h * 0.18))
-        bot_alpha = sprite[-pad_rows:, :, 3]
-        bot_alpha[bot_alpha < 0.16] = 0.0
-        feather_rows = max(3, int(h * 0.04))
+        # Strip baked-in rectangular shadow pad across the full lower half (handles soil_offset during emergence)
+        pad_rows = max(12, int(h * 0.45))
+        sub_t = sprite[-pad_rows:, :, :]
+        sat_t = np.max(sub_t[:, :, :3], axis=2) - np.min(sub_t[:, :, :3], axis=2)
+        # Tree bark/foliage is opaque (>=0.92); rectangular shadow pads in the bottom 25% are semi-transparent (<0.92)
+        is_box_pad = (sub_t[:, :, 3] < 0.82) & (sat_t < 35.0)
+        sub_t[is_box_pad, 3] = 0.0
+        bot_25 = max(8, int(h * 0.25))
+        sub_25 = sprite[-bot_25:, :, :]
+        sub_25[sub_25[:, :, 3] < 0.92, 3] = 0.0
+        feather_rows = max(4, int(h * 0.05))
         sprite[-feather_rows:, :, 3] *= np.linspace(1.0, 0.0, feather_rows, dtype=np.float32)[:, None]
         left, top = int(x - w / 2), ground_y - root_row + 5 + soil_offset
 
@@ -876,19 +896,20 @@ def forest(frame, plates, t, presence, decay=0.0, depth_layers=None, respect_rid
         if respect_ridges:
             sprite[:, :, 3] *= _ridge_visibility_mask(plates, depth, left, top, w, h)
 
-        # Natural ambient occlusion (AO) contact shadow where roots touch the beach sand
-        ao_w = max(16, int(w * 0.30))
-        ao_h = max(3, int(ao_w * 0.16))
-        ao_mask = np.zeros((ao_h * 2 + 1, ao_w * 2 + 1), dtype=np.float32)
-        cv2.ellipse(ao_mask, (ao_w, ao_h), (ao_w, ao_h), 0, 0, 360, 1.0, -1)
-        ao_mask = cv2.GaussianBlur(ao_mask, (0, 0), max(1.5, ao_h * 0.7))
-        sy0 = max(0, ground_y - ao_h)
-        sy1 = min(HORIZON, ground_y + ao_h + 1)
-        sx0 = max(0, int(x) - ao_w)
-        sx1 = min(WIDTH, int(x) + ao_w + 1)
+        # Natural ambient occlusion (AO) contact shadow with generous padding so GaussianBlur never clips to a box
+        ao_w = max(16, int(w * 0.28))
+        ao_h = max(3, int(ao_w * 0.14))
+        ao_pad = max(14, ao_h * 3)
+        ao_mask = np.zeros(((ao_h + ao_pad) * 2 + 1, (ao_w + ao_pad) * 2 + 1), dtype=np.float32)
+        cv2.ellipse(ao_mask, (ao_w + ao_pad, ao_h + ao_pad), (ao_w, ao_h), 0, 0, 360, 1.0, -1)
+        ao_mask = cv2.GaussianBlur(ao_mask, (0, 0), max(2.0, ao_h * 0.8))
+        sy0 = max(0, ground_y - (ao_h + ao_pad))
+        sy1 = min(HORIZON, ground_y + (ao_h + ao_pad) + 1)
+        sx0 = max(0, int(x) - (ao_w + ao_pad))
+        sx1 = min(WIDTH, int(x) + (ao_w + ao_pad) + 1)
         if sy1 > sy0 and sx1 > sx0:
-            patch = ao_mask[sy0 - (ground_y - ao_h):sy1 - (ground_y - ao_h),
-                            sx0 - (int(x) - ao_w):sx1 - (int(x) - ao_w)]
+            patch = ao_mask[sy0 - (ground_y - (ao_h + ao_pad)):sy1 - (ground_y - (ao_h + ao_pad)),
+                            sx0 - (int(x) - (ao_w + ao_pad)):sx1 - (int(x) - (ao_w + ao_pad))]
             ao_factor = 1.0 - patch * (0.32 * tree_presence)
             frame[sy0:sy1, sx0:sx1] = np.clip(
                 frame[sy0:sy1, sx0:sx1].astype(np.float32) * ao_factor[:, :, None],
