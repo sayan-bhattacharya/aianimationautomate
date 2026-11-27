@@ -143,13 +143,12 @@ def build_outro_card(logo_path=None):
     _wordmark(draw, WIDTH / 2, 232)
     _signature_rule(draw, 520)
 
-    _centered(draw, 528, "COMPOSITION BY DRONE WATCH", _font(24, bold=True), gold, tracking=3.2)
-    _centered(draw, 582, "ORIGINAL SOUND BY", _font(22, bold=True), gold, tracking=3.0)
-    _centered(draw, 626, "ATANDRA CHAKRABORTY (BURO)", _font(42, serif=True), ivory, tracking=1.2)
-    _centered(draw, 678, "A VISUAL MUSIC FILM BY", _font(22, bold=True), gold, tracking=3.2)
-    _centered(draw, 716, "SAYAN BHATTACHARYA   |   ATANDRA CHAKRABORTY", _font(32, bold=True), ivory, tracking=1.0)
-    _centered(draw, 800, "BETWEENTHENOTES.STORE", _font(24, bold=True), gold, tracking=3.0)
-    _centered(draw, 850, "WHERE THE SILENCE SPEAKS", _font(20, bold=True), muted, tracking=3.2)
+    _centered(draw, 560, "ORIGINAL MUSIC", _font(22, bold=True), gold, tracking=3.2)
+    _centered(draw, 604, "ATANDRA CHAKRABORTY", _font(42, serif=True), ivory, tracking=1.2)
+    _centered(draw, 684, "A VISUAL MUSIC FILM BY", _font(22, bold=True), gold, tracking=3.2)
+    _centered(draw, 726, "SAYAN BHATTACHARYA   |   ATANDRA CHAKRABORTY", _font(32, bold=True), ivory, tracking=1.0)
+    _centered(draw, 810, "BETWEENTHENOTES.ORG", _font(24, bold=True), gold, tracking=3.0)
+    _centered(draw, 858, "WHERE THE SILENCE SPEAKS", _font(20, bold=True), muted, tracking=3.2)
 
     return np.asarray(image).astype(np.float32)
 
