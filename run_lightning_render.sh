@@ -17,7 +17,8 @@ BLENDER_BIN="$BLENDER_DIR/blender"
 if [ ! -x "$BLENDER_BIN" ]; then
   rm -f "$BASE/blender.tar.xz"
   echo "Downloading Blender 4.3.2 (~352 MB)..."
-  wget --progress=bar:force:noscroll "https://download.blender.org/release/Blender4.3/blender-4.3.2-linux-x64.tar.xz" -O "$BASE/blender.tar.xz"
+  curl -fL --progress-bar "https://ftp.nluug.nl/pub/graphics/blender/release/Blender4.3/blender-4.3.2-linux-x64.tar.xz" -o "$BASE/blender.tar.xz" \
+    || curl -fL -A "Mozilla/5.0" --progress-bar "https://download.blender.org/release/Blender4.3/blender-4.3.2-linux-x64.tar.xz" -o "$BASE/blender.tar.xz"
   ls -lh "$BASE/blender.tar.xz"
   echo "Extracting Blender 4.3.2..."
   tar -xf "$BASE/blender.tar.xz" -C "$BASE"
