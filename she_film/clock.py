@@ -23,7 +23,7 @@ VISIT_LANDING_NEAR = 0.70
 VISIT_HULL_BOTTOM_FRACTION = 70.0 / 90.0  # opaque hull bottom in the source saucer sprite
 MUSHROOM_EXIT_END = VISIT_START + 10.0
 FIR_EMERGENCE_START = MUSHROOM_EXIT_END
-FIR_EMERGENCE_END = FIR_EMERGENCE_START + 8.0
+FIR_EMERGENCE_END = VISIT_DEPARTURE_END  # 36s slow growth (176s -> 212s), reaching 100% right as saucer exits
 
 
 def clamp(p, lo=0.0, hi=1.0):
@@ -151,11 +151,28 @@ def _cut(t, start, hold, end):
 
 
 def title_lines(t):
-    # Hold the opening title and credits through the bright sunrise, then fade out gently.
-    p = _cut(t, 8.0, 18.0, 24.0)
-    film = _cut(t, 9.5, 23.5, 28.5)
-    credits = _cut(t, 11.0, 24.0, 29.0)
-    return ((p, p), (0.0, film), (film, film), (0.0, credits), (0.0, credits), (0.0, credits))
+    """Independent smoothstep fade timings for the 6 opening title/credit layers
+    relative to sequence start t0 = 8.0s (10.0s total span -> 8.0s to 18.0s)."""
+    dt = t - 8.0
+    if dt < 1.5 or dt > 10.0:
+        return ((0.0, 0.0),) * 6
+
+    def _win(a, b, c, d):
+        if dt < a or dt > d:
+            return 0.0
+        if dt < b:
+            return smooth((dt - a) / max(1e-4, b - a))
+        if dt <= c:
+            return 1.0
+        return 1.0 - smooth((dt - c) / max(1e-4, d - c))
+
+    p = _win(1.5, 2.7, 9.2, 10.0)
+    she = _win(2.7, 4.0, 9.2, 10.0)
+    c1 = _win(4.00, 4.75, 8.0, 9.2)
+    c2 = _win(4.35, 5.10, 8.0, 9.2)
+    c3 = _win(4.70, 5.45, 8.0, 9.2)
+    c4 = _win(5.05, 5.80, 8.0, 9.2)
+    return ((p, p), (she, she), (0.0, c1), (0.0, c2), (0.0, c3), (0.0, c4))
 
 
 def visit(t):
