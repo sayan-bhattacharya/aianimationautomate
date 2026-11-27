@@ -19,7 +19,7 @@ echo "=== 2. Generating Screens Cache ==="
 python3 -m she_film.generate_screens_cache
 
 echo "=== 3. Rendering 10 Chunks in Parallel (Multi-Core + Self-Healing Resume) ==="
-python3 - <<'PY'
+cat <<'PY' > "$OUT_DIR/render_opencv_chunks.py"
 import multiprocessing as mp
 import os, shutil, subprocess
 import cv2, numpy as np
@@ -61,34 +61,37 @@ def _render_chunk(ci):
     print(f"✓ Saved chunk {ci+1:02d}/{n_chunks}: {c_path}", flush=True)
     return c_path
 
-pending = [ci for ci, p in enumerate(chunk_paths) if not (os.path.exists(p) and os.path.getsize(p) > 100_000)]
-workers = max(1, min(4, os.cpu_count() or 2, len(pending) or 1))
-print(f"CPU cores: {os.cpu_count()} | Parallel workers: {workers} | Pending chunks: {len(pending)}/{n_chunks}", flush=True)
-if pending:
-    with mp.Pool(processes=workers, initializer=_init_worker) as pool:
-        pool.map(_render_chunk, pending)
+if __name__ == "__main__":
+    pending = [ci for ci, p in enumerate(chunk_paths) if not (os.path.exists(p) and os.path.getsize(p) > 100_000)]
+    workers = max(1, min(6, os.cpu_count() or 2, len(pending) or 1))
+    print(f"CPU cores: {os.cpu_count()} | Parallel workers: {workers} | Pending chunks: {len(pending)}/{n_chunks}", flush=True)
+    if pending:
+        ctx = mp.get_context("fork")
+        with ctx.Pool(processes=workers, initializer=_init_worker) as pool:
+            pool.map(_render_chunk, pending)
 
-concat_txt = os.path.join(OUT_DIR, "concat_4k.txt")
-with open(concat_txt, "w") as f:
-    for cp in chunk_paths:
-        f.write(f"file '{cp}'\n")
+    concat_txt = os.path.join(OUT_DIR, "concat_4k.txt")
+    with open(concat_txt, "w") as f:
+        for cp in chunk_paths:
+            f.write(f"file '{cp}'\n")
 
-MASTER_1080 = os.path.join(OUT_DIR, "she_full_song_1080p_master.mp4")
-if not (os.path.exists(MASTER_1080) and os.path.getsize(MASTER_1080) > 1_000_000):
+    MASTER_1080 = os.path.join(OUT_DIR, "she_full_song_1080p_master.mp4")
+    if not (os.path.exists(MASTER_1080) and os.path.getsize(MASTER_1080) > 1_000_000):
+        subprocess.run([
+            "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", concat_txt,
+            "-i", os.path.join(REPO, "She.wav"),
+            "-c:v", "copy", "-c:a", "aac", "-b:a", "256k", "-shortest", MASTER_1080
+        ], check=True)
+        print("✓ Safe-point 1080p master saved:", MASTER_1080, flush=True)
+
+    MASTER_4K = os.path.join(OUT_DIR, "she_full_song_4K_crystal_nocturne_master.mp4")
+    print("Upscaling 1080p -> 4K (3840x2160)...", flush=True)
     subprocess.run([
-        "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", concat_txt,
-        "-i", os.path.join(REPO, "She.wav"),
-        "-c:v", "copy", "-c:a", "aac", "-b:a", "256k", "-shortest", MASTER_1080
+        "ffmpeg", "-y", "-i", MASTER_1080,
+        "-vf", "scale=3840:2160:flags=lanczos,unsharp=5:5:0.45:5:5:0.0",
+        "-c:v", "libx264", "-preset", "medium", "-crf", "16", "-pix_fmt", "yuv420p",
+        "-c:a", "copy", MASTER_4K
     ], check=True)
-    print("✓ Safe-point 1080p master saved:", MASTER_1080, flush=True)
-
-MASTER_4K = os.path.join(OUT_DIR, "she_full_song_4K_crystal_nocturne_master.mp4")
-print("Upscaling 1080p -> 4K (3840x2160)...", flush=True)
-subprocess.run([
-    "ffmpeg", "-y", "-i", MASTER_1080,
-    "-vf", "scale=3840:2160:flags=lanczos,unsharp=5:5:0.45:5:5:0.0",
-    "-c:v", "libx264", "-preset", "medium", "-crf", "16", "-pix_fmt", "yuv420p",
-    "-c:a", "copy", MASTER_4K
-], check=True)
-print("✓ Final 4K OpenCV Master ready:", MASTER_4K, flush=True)
+    print("✓ Final 4K OpenCV Master ready:", MASTER_4K, flush=True)
 PY
+python3 "$OUT_DIR/render_opencv_chunks.py"
