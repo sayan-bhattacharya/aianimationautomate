@@ -1,0 +1,44 @@
+SHE | The Full Film (4K) — Official Release
+A cinematic ambient music film by Sayan Bhattacharya and Atandra Chakraborty, presented by Between The Notes.
+
+#SHEFilm #AmbientMusic #VisualMusic #AdvaitaVedanta #ProceduralAnimation
+
+Before language, before memory, a world quietly unfolds.
+
+SHE is a 7-minute visual music film (7:25) exploring impermanence, stillness, and return through original ambient composition, surreal landscapes, and cinematic imagery. Created through a combination of procedural animation using Python and OpenCV, and hybrid cinematic aerial cinematography, SHE brings together music, code, and visual storytelling in an independent audiovisual experience.
+
+Essentially, we wanted to help you activate your parasympathetic nervous system. Take a moment, slow down, and let the experience unfold.
+
+---
+MUSIC
+Original Composition: Drone Watch
+Original Sound: Atandra Chakraborty (Buro)
+Listen to SHE on SoundCloud: https://soundcloud.com/a-bc-e-def/she
+
+---
+PHILOSOPHY & VISUAL JOURNEY
+At its philosophical heart, SHE draws inspiration from Advaita Vedanta and the idea of non-duality: that beneath the apparent diversity and separation of existence lies an indivisible oneness.
+
+The film explores this idea through the cycles of nature, the emergence of life, cosmic transformation, and the eventual return to stillness. From serene coastal sunrises and bioluminescent fungal blooms to prehistoric eras and cosmic night skies, we follow the progression of evolving life forms across time—inviting you to experience non-duality through sound, imagery, and contemplation rather than explanation.
+
+---
+OPEN-SOURCE REPOSITORY & CODE
+Explore how SHE was coded, rendered, and scored in 4K (3840x2160) using Python, OpenCV, FFmpeg, and Google Colab:
+GitHub Repository: https://github.com/sayan-bhattacharya/aianimationautomate
+
+---
+CREDITS
+Presented by: Between The Notes
+Composition: Drone Watch
+Original Sound: Atandra Chakraborty (Buro)
+Cinema, Direction & Engineering: Sayan Bhattacharya
+
+---
+MORE FROM BETWEEN THE NOTES
+• Explore Between The Notes: https://betweenthenotes.store
+• Companion Podcast: Between The Notes — How We Coded & Scored SHE
+
+Thank you for watching. We hope you enjoy the journey.
+Subscribe for weekly visual essays, and let us know your thoughts on the themes of existence in the comments below.
+
+#SHEFilm #AmbientMusic #VisualMusic

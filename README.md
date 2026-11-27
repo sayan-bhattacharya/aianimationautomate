@@ -1,30 +1,49 @@
-# SHE Full-Song Film Render Pipeline
+# 🎬 SHE: 4K Visual Music Film & Blender DoF Pipeline
 
-SHE is the ambient music-film project in this repository. It is separate from the NOIR project and does not share its code, assets, or render workflow.
+[![Open Blender 4K DoF in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/sayan-bhattacharya/aianimationautomate/blob/codex/grounded-mushroom-colab/SHE_4K_Blender_DoF_Colab.ipynb)
+[![Open 4K Master & Teaser in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/sayan-bhattacharya/aianimationautomate/blob/codex/grounded-mushroom-colab/SHE_4K_Master_And_Teaser_Colab.ipynb)
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/sayan-bhattacharya/aianimationautomate/blob/main/SHE_Full_Song_Master_Render_Colab.ipynb)
+Autonomous computer-vision, Blender 3D, and procedural VFX pipeline for the full-length ambient visual music film **"SHE"** (7:25 | 10,680 frames @ 24fps | 4K `3840×2160`) by **Sayan Bhattacharya** and **Atandra Chakraborty (Between The Notes)**.
 
-## Current render target
+---
 
-- Runtime: **7:25**, 10,680 frames at 24 fps
-- Master: **1920?1080**, H.264 video with 320 kb/s AAC audio
-- Render flow: 10 sequential chunks, with Google Drive checkpoints when Drive is mounted
-- Teaser: 50 seconds, 1920?1080 landscape at 30 fps
-- Current handoff: [revision notes](SHE_RENDER_REVISION_NOTES.md), [end-of-day critical review](SHE_END_OF_DAY_REVIEW_2026-11-25.md)
+## 🚀 One-Click Google Colab Render (Self-Healing)
 
-The notebook clones SHE code, assets, audio, and audio features from this repository's `main` branch. Colab resource availability and execution time vary by account/runtime. The renderer uses CPU-side frame generation and ffmpeg encoding; having a GPU visible does not mean the render is GPU-accelerated.
+* **Blender 3D + Optical DoF 4K Pipeline (Recommended):**
+  **[Open `SHE_4K_Blender_DoF_Colab.ipynb` in Colab](https://colab.research.google.com/github/sayan-bhattacharya/aianimationautomate/blob/codex/grounded-mushroom-colab/SHE_4K_Blender_DoF_Colab.ipynb)**
+  * Per-frame & per-chunk Google Drive checkpointing (resumes at the exact frame if Colab disconnects)
+  * Built-in 5-frame T4 GPU benchmark (`720p` & `1080p`)
+  * 3D undulating sand dunes, Cycles GPU + OpenImageDenoise, optical Depth of Field (`f/2.0`), and 4K Lanczos upscale with `She.wav`
+* **OpenCV Hybrid 4K Master & Teaser Pipeline:**
+  **[Open `SHE_4K_Master_And_Teaser_Colab.ipynb` in Colab](https://colab.research.google.com/github/sayan-bhattacharya/aianimationautomate/blob/codex/grounded-mushroom-colab/SHE_4K_Master_And_Teaser_Colab.ipynb)**
 
-## Visual revision represented in the current notebook
+---
 
-The late Buddha/studio passage contains four moving CRT feeds. The first/left feed shows a painterly dinosaur aerial; the middle feeds show related dinosaur views; the far-right feed uses subdued analog noise. The 7:05 review point checks that arrangement, and the closing credits include `.STORE` around 7:21. Tree motion is slow and restrained; the dinosaur procession remains distant in the landscape.
+## 🎥 Blender 3D + Optical Depth-of-Field Previews
 
-## Automated checks and their limits
+| Mushroom Scene (`1:01` — Sun Center) | Forest Scene (`3:21` — Sunrise Left) | Dinosaur Caravan (`4:22` — Sun High Right) |
+| :---: | :---: | :---: |
+| ![Mushrooms DoF](blender_previews/01_mushrooms_1m01_sun_center.png) | ![Forest DoF](blender_previews/02_forest_3m21_sun_low_left.png) | ![Dinos DoF](blender_previews/03_dinos_4m22_sun_high_right.png) |
 
-The pre-render gate passed 34 code/asset checks for the scene revision, including mushroom grounding and timing, water restraint, dinosaur continuity, four moving CRT feeds, and the 7:25 runtime. It is not a visual quality certificate. The notebook isolates checkpoints by a stable render fingerprint of SHE code, assets, audio, audio features, and explicit render settings (not the notebook file), reuses chunks only when the manifest, SHA-256, exact frame count, dimensions, codec, and frame rate match, and gates download on the final technical review. The final review also checks full-file decoding and audio/video stream duration alignment. Freeze/black-frame quality, loudness, fine sync, and artistic quality still need more checks and human review. Inspect and listen to the rendered master before release.
+---
 
-Final video files are generated in Colab/Drive and are not stored in Git.
+## 🧩 Cleaned 4K Assets (`assets/blender_clean/`)
 
+All dinosaur sprites are exterior border flood-filled (zero interior `alpha=0` holes), and all botanical plates have dark studio floor pads stripped and feathered for seamless 3D dune grounding.
 
-## Repository boundary
+### Botanicals
+| Pagoda Mushroom | Whorl Fir (Warm) | Whorl Fir (Deep) | Whorl Fir (Cool) |
+| :---: | :---: | :---: | :---: |
+| ![Pagoda Mushroom](assets/blender_clean/hero_pagoda_mushroom_master.png) | ![Pine Warm](assets/blender_clean/pine_fuller_warm.png) | ![Pine Deep](assets/blender_clean/pine_fuller_deep.png) | ![Pine Cool](assets/blender_clean/pine_fuller_cool.png) |
 
-This repository contains SHE only. NOIR lives in its separate `noir-analog-horror` repository. The local `drone_animation_project/` folder in the broader workspace is an older archive, not a source for this renderer.
+### Dinosaurs
+| Sauropod | Hadrosaur | Ankylosaur | Raptor | Pterodactyl |
+| :---: | :---: | :---: | :---: | :---: |
+| ![Sauropod](assets/blender_clean/pokemon_sauropod.png) | ![Hadrosaur](assets/blender_clean/pokemon_hadrosaur.png) | ![Ankylosaur](assets/blender_clean/pokemon_ankylosaur.png) | ![Raptor](assets/blender_clean/pokemon_raptor.png) | ![Pterodactyl](assets/blender_clean/pokemon_pterodactyl.png) |
+
+---
+
+## 🛠️ Pipeline Highlights
+1. **Self-Healing Drive Checkpointing**: Saves cleaned 4K assets, individual rendered frames, encoded 1080p/720p chunks, and pre-upscale masters directly to Google Drive.
+2. **Botanical & Dinosaur Integrity**: Automated `clean_blender_assets.py` removes studio floor rectangles and interior alpha holes; `actors.py` removes floating foliage-nibble artifacts.
+3. **True Perspective Telemetry Suite (2-Screen Buddha Redesign)**: Calibrated planar homography (`cv2.warpPerspective`) with chromatic aberration, CRT vignette, and phosphor bloom.

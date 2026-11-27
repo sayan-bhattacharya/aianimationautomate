@@ -180,8 +180,9 @@ def _aurora_timelapse(frame, t, night):
     frame[:sky_h] = np.clip(frame[:sky_h] + aurora_full, 0.0, 255.0)
 
 
-def aurora_reflect(frame, t, night, stillness=0.0):
-    """Render wavy, liquid reflection of the northern lights across the ocean surface."""
+def aurora_reflect(frame, t, night, stillness=0.0, audio_feats=None, moon_body=None):
+    """Render a mild, wavy reflection of the northern lights modulated by
+    audio transients and the moon's ray-traced reflection column."""
     if night < 0.06:
         return
     sky_h = HORIZON - 12
@@ -193,7 +194,7 @@ def aurora_reflect(frame, t, night, stillness=0.0):
 
     # Flip sky aurora vertically and stretch smoothly across the water surface
     flipped = cv2.resize(aurora_q[::-1], (sw, wh), interpolation=cv2.INTER_LINEAR)
-    fade = np.linspace(0.55, 0.04, wh, dtype=np.float32)[:, None, None]
+    fade = np.linspace(0.46, 0.03, wh, dtype=np.float32)[:, None, None]
     flipped *= fade
 
     # Wavy ocean refraction (stays gently wavy even in stillness, stronger when waves are active)
@@ -208,8 +209,24 @@ def aurora_reflect(frame, t, night, stillness=0.0):
     map_y = np.clip(yy + ripple_y, 0, wh - 1).astype(np.float32)
     wavy_q = cv2.remap(flipped, map_x, map_y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT_101)
 
+    # Modulate intensity with musical note transients (matching water.py) & moon ray-traced path
+    note_energy = 0.0
+    if audio_feats is not None and len(audio_feats) > 0:
+        f_idx = min(len(audio_feats) - 1, max(0, int(t * 24.0)))
+        note_energy = float(audio_feats[f_idx, 9] * 0.70 + audio_feats[f_idx, 5] * 0.30)
+    transient_mod = 0.62 + 0.58 * float(np.clip(note_energy, 0.0, 1.0))
+
+    ray_mod = 1.0
+    if moon_body is not None:
+        mx_q = float(moon_body[0]) / step
+        col_w = (55.0 + 165.0 * (yy / max(1.0, float(wh)))) / step
+        moon_vis = float(smooth((moon_body[1] + 16.0) / 30.0))
+        moon_col = np.exp(-0.5 * ((xx - mx_q) / np.maximum(1.0, col_w)) ** 2) * moon_vis
+        ray_mod = (1.0 + 0.50 * moon_col)[:, :, None]
+
+    wavy_q *= transient_mod * ray_mod
     wavy_full = cv2.resize(wavy_q, (WIDTH, water_h), interpolation=cv2.INTER_LINEAR)
-    frame[HORIZON:] = np.clip(frame[HORIZON:] + wavy_full * 0.85, 0.0, 255.0)
+    frame[HORIZON:] = np.clip(frame[HORIZON:] + wavy_full * 0.62, 0.0, 255.0)
 
 
 def stars(frame, plates, t, night, moon_body):
@@ -406,7 +423,7 @@ def _get_active_mushroom_stands(plates, t):
             base_raw = mushroom_target_frame(vs_growth, age)
             base_fade = 1.0
         else:
-            phase = (8.0 - wave_delay + max(0.0, age - 8.0) * 0.45) % 16.0
+            phase = (8.0 - wave_delay * 0.28 + max(0.0, age - 8.0) * 0.30) % 16.0
             idle_t = phase if phase <= 8.0 else 16.0 - phase
             base_raw = vs_idle.get_frame(idle_t, loop=False)
             base_fade = 1.0
@@ -554,35 +571,37 @@ def life(frame, plates, t, alpha=1.0):
                 0, 255
             ).astype(np.uint8)
 
-        # Draw firmly grounded mushroom sprite
-        over(frame, spr, x, y, alpha * a_fade)
+        # Clean bottom-edge rectangular pad fringe on mushroom sprite before compositing
+        spr_clean = spr.copy()
+        sh_m = spr_clean.shape[0]
+        pad_rows = max(4, int(sh_m * 0.16))
+        a_bot = spr_clean[-pad_rows:, :, 3]
+        a_bot[a_bot < 0.16] = 0.0
+        feather_rows = max(3, int(sh_m * 0.05))
+        spr_clean[-feather_rows:, :, 3] *= np.linspace(1.0, 0.0, feather_rows, dtype=np.float32)[:, None]
 
-        # Foreground Sand Dune Drift Lip / Sand Cradle:
-        # A soft organic sand drift that wraps in front of root tips with zero rectangular edges
-        lip_w = max(18, int(spr.shape[1] * 0.30))
-        lip_h = max(2, min(4, int(max_depth_to_water * 0.5)))
-        lip_mask = np.zeros((lip_h * 2 + 1, lip_w * 2 + 1), dtype=np.float32)
-        cv2.ellipse(lip_mask, (lip_w, lip_h), (lip_w, lip_h), 0, 0, 360, 1.0, -1)
-        lip_mask = cv2.GaussianBlur(lip_mask, (0, 0), max(1.0, lip_h * 0.5))
-        
-        lx0 = max(0, int(x + spr.shape[1] // 2) - lip_w)
-        lx1 = min(WIDTH, int(x + spr.shape[1] // 2) + lip_w + 1)
+        # Capture live dune pixels BEFORE drawing sprite for dynamic ground occlusion
+        lip_w = max(18, int(spr_clean.shape[1] * 0.30))
+        lip_h = max(3, min(6, int(max_depth_to_water * 0.6)))
+        lx0 = max(0, int(x + spr_clean.shape[1] // 2) - lip_w)
+        lx1 = min(WIDTH, int(x + spr_clean.shape[1] // 2) + lip_w + 1)
         ly0 = max(0, ground_y - lip_h)
         ly1 = min(HORIZON, ground_y + lip_h + 1)
-        if ly1 > ly0 and lx1 > lx0:
+        bg_dune = frame[ly0:ly1, lx0:lx1].copy() if (ly1 > ly0 and lx1 > lx0) else None
+
+        # Draw firmly grounded mushroom sprite
+        over(frame, spr_clean, x, y, alpha * a_fade)
+
+        # Dynamic Live-Dune Occlusion Mask: blends the actual lit dune pixels back over root tips
+        if bg_dune is not None:
+            lip_mask = np.zeros((lip_h * 2 + 1, lip_w * 2 + 1), dtype=np.float32)
+            cv2.ellipse(lip_mask, (lip_w, lip_h), (lip_w, lip_h), 0, 0, 360, 1.0, -1)
+            lip_mask = cv2.GaussianBlur(lip_mask, (0, 0), max(1.2, lip_h * 0.55))
             patch = lip_mask[(ly0 - (ground_y - lip_h)):(ly1 - (ground_y - lip_h)),
-                             (lx0 - (int(x + spr.shape[1] // 2) - lip_w)):(lx1 - (int(x + spr.shape[1] // 2) - lip_w))]
-            day, warm, night = sky_weights(t)
-            dune_sand_color = np.array([
-                186.0 * warm + 150.0 * day + 42.0 * night,
-                96.0 * warm + 142.0 * day + 40.0 * night,
-                64.0 * warm + 160.0 * day + 68.0 * night
-            ], dtype=np.float32)
-            sand_crest = np.array([24.0 * warm + 14.0 * day + 6.0 * night, 14.0 * warm + 10.0 * day + 6.0 * night, 8.0 * warm + 6.0 * day + 10.0 * night], dtype=np.float32)
-            sand_lip_col = dune_sand_color + sand_crest
+                             (lx0 - (int(x + spr_clean.shape[1] // 2) - lip_w)):(lx1 - (int(x + spr_clean.shape[1] // 2) - lip_w))]
+            blend_a = patch[:, :, None] * (0.85 * alpha * a_fade)
             frame_patch = frame[ly0:ly1, lx0:lx1].astype(np.float32)
-            blend_a = patch[:, :, None] * (0.82 * alpha * a_fade)
-            frame[ly0:ly1, lx0:lx1] = np.clip(frame_patch * (1.0 - blend_a) + sand_lip_col * blend_a, 0, 255).astype(np.uint8)
+            frame[ly0:ly1, lx0:lx1] = np.clip(frame_patch * (1.0 - blend_a) + bg_dune.astype(np.float32) * blend_a, 0, 255).astype(np.uint8)
 
 
 def life_reflect(frame, plates, t, stillness=0.0):
@@ -628,8 +647,8 @@ FOREST_DEPTH_VISIBILITY = (0.96, 1.0, 0.96, 0.94, 0.90)
 FOREST_REFLECTION_VISIBILITY = (0.12, 0.16, 0.035, 0.03, 0.05)
 FOREST_REFLECTION_HEIGHT = (0.38, 0.45, 0.25, 0.23, 0.26)
 FOREST_GROUND_MARGIN = 18
-FOREST_EMERGENCE_DELAY = (0.44, 0.72, 0.0, 0.10, 0.26)
-FOREST_EMERGENCE_DURATION = 0.15
+FOREST_EMERGENCE_DELAY = (0.24, 0.36, 0.0, 0.08, 0.16)
+FOREST_EMERGENCE_DURATION = 0.52
 
 
 def forest_ground_y(plates, index):
@@ -707,19 +726,23 @@ def _tree_wind_and_contact(sprite, t, tree_x, tree_index, tree_depth, audio_feat
     # Lock the bottom 6% of rows so root grounding never shifts
     pin = np.clip((v - 0.04) / 0.12, 0.0, 1.0)
 
-    dx_row = np.zeros((h, 1), dtype=np.float32)
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+    dx_field = np.zeros((h, w), dtype=np.float32)
     if wind_strength >= 0.005:
-        gust = math.sin(t * (math.tau / 10.5) + tree_x * 0.005) + 0.28 * math.sin(t * 0.58 - tree_x * 0.008)
-        rows = np.arange(h, dtype=np.float32)[:, None]
-        leaf_flutter = np.sin(rows * 0.085 - t * 2.8 + tree_index * 1.4) * 0.30
-        dx_row += wind_strength * (4.2 * gust * (v ** 1.5) + 1.2 * leaf_flutter * (v ** 1.05)) * pin
+        # Keep the central trunk steady; apply gentle, silky flutter to outer leaves/branches only
+        trunk_dist = np.abs(xx - w * 0.5) / max(1.0, w * 0.5)
+        leaf_mask = np.clip((trunk_dist - 0.14) / 0.32, 0.0, 1.0)
+        gust = math.sin(t * (math.tau / 10.5) + tree_x * 0.005) + 0.25 * math.sin(t * 0.58 - tree_x * 0.008)
+        leaf_flutter = np.sin(yy * 0.055 - t * 2.6 + xx * 0.025 + tree_index * 1.4)
+        crown_lean = 1.1 * gust * (v ** 1.6)
+        breeze_leaves = 2.6 * leaf_flutter * leaf_mask * (v ** 0.9)
+        dx_field += wind_strength * (crown_lean + breeze_leaves) * pin
 
     if abs(dino_push) >= 0.05:
         contact_profile = np.exp(-0.5 * ((v - 0.36) / 0.28) ** 2) * pin
-        dx_row += dino_push * contact_profile
+        dx_field += dino_push * contact_profile
 
-    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
-    map_x = (xx - dx_row).astype(np.float32)
+    map_x = (xx - dx_field).astype(np.float32)
     return cv2.remap(sprite, map_x, yy, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0, 0))
 
 
@@ -827,7 +850,12 @@ def forest(frame, plates, t, presence, decay=0.0, depth_layers=None, respect_rid
                 sprite = cv2.resize(sprite, (bw, bh), interpolation=cv2.INTER_LINEAR)
                 soil_offset += h - bh
                 w, h = bw, bh
-        # Seat root base 5px into the soil so root spurs firmly penetrate the beach sand
+        # Seat root base 5px into the soil and strip faint rectangular bounding-box pad fringes
+        pad_rows = max(4, int(h * 0.18))
+        bot_alpha = sprite[-pad_rows:, :, 3]
+        bot_alpha[bot_alpha < 0.16] = 0.0
+        feather_rows = max(3, int(h * 0.04))
+        sprite[-feather_rows:, :, 3] *= np.linspace(1.0, 0.0, feather_rows, dtype=np.float32)[:, None]
         left, top = int(x - w / 2), ground_y - root_row + 5 + soil_offset
 
         # Seamless Root Integration into Beach Soil:
@@ -1103,6 +1131,24 @@ def ridge_elevation_y(x):
     return HORIZON - 16.0 - (ridge + wave)
 
 
+def _draw_soft_dino_shadow(frame, cx, cy, rx, ry, shadow_tint, opacity=0.42):
+    """Draw a single soft, feathered ground shadow from the singular light source."""
+    rx = max(12, int(rx))
+    ry = max(4, int(ry))
+    pad = max(8, int(ry * 1.2))
+    mw, mh = (rx + pad) * 2 + 1, (ry + pad) * 2 + 1
+    mask = np.zeros((mh, mw), dtype=np.float32)
+    cv2.ellipse(mask, (rx + pad, ry + pad), (rx, ry), 0, 0, 360, 1.0, -1)
+    mask = cv2.GaussianBlur(mask, (0, 0), max(2.5, ry * 0.65))
+    x0, y0 = int(cx) - (rx + pad), int(cy) - (ry + pad)
+    dx0, dy0 = max(0, x0), max(0, y0)
+    dx1, dy1 = min(WIDTH, x0 + mw), min(HORIZON, y0 + mh)
+    if dx1 > dx0 and dy1 > dy0:
+        patch = mask[dy0 - y0:dy1 - y0, dx0 - x0:dx1 - x0, None] * opacity
+        tint = np.asarray(shadow_tint, dtype=np.float32)
+        frame[dy0:dy1, dx0:dx1] += (tint - frame[dy0:dy1, dx0:dx1]) * patch
+
+
 def beasts(frame, plates, herd, t=0.0):
     if not herd:
         return
@@ -1126,28 +1172,17 @@ def beasts(frame, plates, herd, t=0.0):
             
             if hero_spr is not None:
                 hw, hh = hero_spr.shape[1], hero_spr.shape[0]
-                # Ground contact shadow under feet deepens subtly on rhythmic piano accents
-                shad_rx = int(115 * (1.0 + 0.12 * piano_onset))
-                shad_ry = int(12 * (1.0 + 0.14 * piano_onset))
-                _, _, shadow_tint = _celestial_shadow(x, t)
-                cv2.ellipse(frame, (int(x), int(ground)), (shad_rx, shad_ry), 0, 0, 360, shadow_tint, -1, cv2.LINE_AA)
-                # Dynamic long slanting shadow downward towards ocean water edge
-                shadow_dx, shadow_dy, _ = _celestial_shadow(x, t, scale=1.0)
-                cv2.ellipse(frame, (int(x + shadow_dx), int(ground + shadow_dy)), (int(shad_rx * 1.25), int(shad_ry * 1.6)), -12, 0, 360, shadow_tint, -1, cv2.LINE_AA)
+                # Single soft ground shadow aligned to the singular sun/moon vector
+                shad_rx = int(120 * (1.0 + 0.08 * piano_onset))
+                shad_ry = int(13 * (1.0 + 0.10 * piano_onset))
+                shadow_dx, shadow_dy, shadow_tint = _celestial_shadow(x, t, scale=0.45)
+                _draw_soft_dino_shadow(frame, x + shadow_dx, ground + shadow_dy * 0.35, shad_rx, shad_ry, shadow_tint, opacity=0.44)
                 sy = ground - hh + 6
                 over(frame, hero_spr, x - hw / 2, sy, 0.98 * _edge_presence(x, hw))
-                
-                # Falling foliage nibbles during canopy grazing sync with piano roll
-                if 258.0 <= t <= 288.0 and neck_bend > 0.3:
-                    for k in range(3):
-                        ly = int(sy + 40 + ((t * 22 + k * 7 + piano_onset * 5) % 25))
-                        lx = int(x + hw * 0.28 + math.sin(t * 7 + k) * 6)
-                        if 0 <= lx < WIDTH and 0 <= ly < HEIGHT:
-                            cv2.circle(frame, (lx, ly), 2, (75, 138, 55), -1)
             else:
                 sprite_y = ground - 280 + 4
-                _, _, shadow_tint = _celestial_shadow(x, t)
-                cv2.ellipse(frame, (int(x + 10), int(ground)), (140, 14), 0, 0, 360, shadow_tint, -1, cv2.LINE_AA)
+                shadow_dx, shadow_dy, shadow_tint = _celestial_shadow(x, t, scale=0.45)
+                _draw_soft_dino_shadow(frame, x + 10 + shadow_dx, ground + shadow_dy * 0.35, 140, 14, shadow_tint, opacity=0.44)
                 _draw_grazing_sauropod(frame, x - 250, sprite_y, neck_bend, t)
         else:
             # Trailing species: Hadrosaur (1), Ankylosaur (2), Raptor (3)
@@ -1164,11 +1199,10 @@ def beasts(frame, plates, herd, t=0.0):
                 sprite = forms[d_id % len(forms)]
             sw, sh = sprite.shape[1], sprite.shape[0]
             sy = ground - sh + 5
-            # Foot contact shadow permanently sized to this exact species
-            shad_r = int(sw * 0.32 * (1.0 + 0.1 * piano_onset))
-            shadow_dx, shadow_dy, shadow_tint = _celestial_shadow(x, t, scale=min(1.0, sw / 160.0))
-            cv2.ellipse(frame, (int(x), int(ground)), (shad_r, 8), 0, 0, 360, shadow_tint, -1, cv2.LINE_AA)
-            cv2.ellipse(frame, (int(x + shadow_dx), int(ground + shadow_dy)), (int(shad_r * 1.15), 11), -10, 0, 360, shadow_tint, -1, cv2.LINE_AA)
+            # Single soft ground shadow sized to this species along the singular light vector
+            shad_r = int(sw * 0.34 * (1.0 + 0.08 * piano_onset))
+            shadow_dx, shadow_dy, shadow_tint = _celestial_shadow(x, t, scale=min(0.45, sw / 360.0))
+            _draw_soft_dino_shadow(frame, x + shadow_dx, ground + shadow_dy * 0.35, shad_r, 9, shadow_tint, opacity=0.42)
             over(frame, sprite, x - sw / 2, sy, 0.96 * _edge_presence(x, sw))
 
 
