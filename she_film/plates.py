@@ -201,7 +201,7 @@ def _title_cards():
 
     specs = [
         ("BETWEEN THE NOTES PRESENTS", "manrope", 18, 500, 0.075, graphite_teal, 92, True),
-        ("SHE", "cormorant", 112, 500, 0.22, ink_teal, 216, False),
+        ("SHE", "cormorant", 112, 500, 0.22, ink_teal, 216, True),
         ("COMPOSITION BY DRONE WATCH", "manrope", 20, 300, 0.055, graphite_teal, 276, False),
         ("ORIGINAL SOUND BY ATANDRA CHAKRABORTY (BURO)", "manrope", 20, 300, 0.055, graphite_teal, 314, False),
         ("CINEMA & DIRECTION — SAYAN BHATTACHARYA", "manrope", 20, 300, 0.055, graphite_teal, 352, False),

@@ -541,8 +541,19 @@ def render(plates, t):
         # Subtle 5px upward drift during each layer's fade-in (meditative settle)
         drift_y = 5.0 * (1.0 - min(1.0, text_a)) if (8.0 <= t <= 14.5 and text_a > 0.02) else 0.0
         if rule is not None and rule_a > 0.02:
-            ry = (116.0 if rule.shape[0] == 1 else (y + words.shape[0] - 2)) + drift_y
-            actors.over(frame, rule, x + (words.shape[1] - rule.shape[1]) / 2, ry, rule_a)
+            if idx_t == 0:
+                ry = 116.0 + drift_y
+                draw_prog = smooth((t - 9.5) / 1.1)
+            else:
+                # Animated underline beneath SHE expanding smoothly from center
+                ry = 232.0 + drift_y
+                draw_prog = smooth((t - 11.2) / 1.3)
+            rw = rule.shape[1]
+            vis_w = max(2, int(round(rw * draw_prog)))
+            c0 = (rw - vis_w) // 2
+            sub_rule = rule[:, c0:c0 + vis_w]
+            rx = x + (words.shape[1] - rw) / 2 + c0
+            actors.over(frame, sub_rule, rx, ry, rule_a)
         if text_a > 0.02:
             actors.over(frame, words, x, y + drift_y, text_a)
 
