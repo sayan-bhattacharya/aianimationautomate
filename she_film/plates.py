@@ -213,7 +213,10 @@ def _title_cards():
         plate, bl_offset = _render_tracked_line(text, font, fill, tracking_px=size * em_track)
         rule = None
         if has_divider:
-            rule = Image.new("RGBA", (340, 1), divider_col)
+            if text == "SHE":
+                rule = Image.new("RGBA", (360, 2), (38, 56, 60, 175))
+            else:
+                rule = Image.new("RGBA", (340, 1), divider_col)
             rule = np.asarray(rule)
         cards.append((np.asarray(plate), rule, 960.0 - plate.width / 2.0, float(baseline_y) - bl_offset))
     return cards
