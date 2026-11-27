@@ -92,16 +92,25 @@ def _moon_sprite():
     return np.asarray(im)
 
 
-def _font(size, light=True):
+def _font(size, light=True, bold=False):
     # Cross-platform font resolution: Windows, Linux (Ubuntu/Colab), with scalable Pillow fallback
-    candidates = [
-        r"C:\Windows\Fonts\segoeuisl.ttf" if light else r"C:\Windows\Fonts\segoeui.ttf",
-        r"C:\Windows\Fonts\arial.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-        "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
-        "/usr/share/fonts/truetype/ubuntu/Ubuntu-R.ttf",
-    ]
+    if bold:
+        candidates = [
+            r"C:\Windows\Fonts\arialbd.ttf",
+            r"C:\Windows\Fonts\segoeuib.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+            "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+        ]
+    else:
+        candidates = [
+            r"C:\Windows\Fonts\segoeuisl.ttf" if light else r"C:\Windows\Fonts\segoeui.ttf",
+            r"C:\Windows\Fonts\arial.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+            "/usr/share/fonts/truetype/ubuntu/Ubuntu-R.ttf",
+        ]
     for p in candidates:
         if os.path.exists(p):
             try:
@@ -114,35 +123,99 @@ def _font(size, light=True):
         return ImageFont.load_default()
 
 
+def _load_editorial_font(family, size, weight=400):
+    """Load real Cormorant Garamond / Manrope fonts with variable weight support."""
+    fonts_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
+    if family == "cormorant":
+        candidates = [
+            os.path.join(fonts_dir, "CormorantGaramond-Medium.ttf"),
+            r"C:\Windows\Fonts\georgia.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
+        ]
+    else:
+        candidates = [
+            os.path.join(fonts_dir, "Manrope-Variable.ttf"),
+            r"C:\Windows\Fonts\segoeuisl.ttf" if weight <= 350 else r"C:\Windows\Fonts\segoeui.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        ]
+    for p in candidates:
+        if os.path.exists(p):
+            try:
+                f = ImageFont.truetype(p, size)
+                try:
+                    f.set_variation_by_axes([weight])
+                except Exception:
+                    pass
+                return f
+            except Exception:
+                continue
+    return _font(size, light=(weight <= 350))
+
+
+def _render_tracked_line(text, font, fill_rgba, tracking_px, shadow_rgba=(23, 35, 38, 36)):
+    """Render a centered, properly kerned & tracked line at supersampled resolution
+    with subtle #172326 shadow (14% opacity, 3.5px blur, +1.5px Y offset)."""
+    scale = 2
+    probe = ImageDraw.Draw(Image.new("RGB", (8, 8)))
+    widths = [probe.textlength(ch, font=font) for ch in text]
+    tw = int(sum(widths) + tracking_px * scale * max(0, len(text) - 1))
+    # Measure ascent/descent cleanly via anchor='ls' (left-baseline)
+    bbox = probe.textbbox((0, 0), text, font=font, anchor="ls")
+    ascent = -bbox[1]
+    descent = bbox[3]
+    pad = 24
+    cw = tw + pad * 2
+    ch = ascent + descent + pad * 2
+    baseline_in_plate = pad + ascent
+
+    shadow_img = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
+    sd = ImageDraw.Draw(shadow_img)
+    x = float(pad)
+    for glyph, w in zip(text, widths):
+        sd.text((x, baseline_in_plate + 1.5 * scale), glyph, font=font, fill=shadow_rgba, anchor="ls")
+        x += w + tracking_px * scale
+    shadow_img = shadow_img.filter(ImageFilter.GaussianBlur(radius=3.5 * scale))
+
+    fg_img = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
+    fd = ImageDraw.Draw(fg_img)
+    x = float(pad)
+    for glyph, w in zip(text, widths):
+        fd.text((x, baseline_in_plate), glyph, font=font, fill=fill_rgba, anchor="ls")
+        x += w + tracking_px * scale
+
+    combined = Image.alpha_composite(shadow_img, fg_img)
+    out = combined.resize((max(1, cw // scale), max(1, ch // scale)), Image.Resampling.LANCZOS)
+    return out, baseline_in_plate / float(scale)
+
+
 def _title_cards():
-    """Create individually timed, supersampled title plates with a quiet shadow edge."""
+    """SHE — Final Opening Title & Credit Design Specification (1920x1080):
+    - Deep ink teal (#26383C) SHE in Cormorant Garamond Medium (112px, 0.22em)
+    - Graphite teal (#39494A) Manrope Medium/Light credits
+    - Subtle 1px divider (#39494A @ 35%) at Y=169, X=790..1130
+    - No background panels, no overlays, no champagne/yellow text.
+    """
+    ink_teal = (38, 56, 60, 255)        # #26383C
+    graphite_teal = (57, 73, 74, 255)   # #39494A
+    divider_col = (57, 73, 74, 89)      # #39494A @ 35%
+
     specs = [
-        ("BETWEEN  THE  NOTES  PRESENTS", 26, (244, 224, 190, 255), (228, 185, 129, 220), 188, True),
-        ("S    H    E", 96, (255, 244, 218, 255), None, 268, False),
-        ("COMPOSITION BY DRONE WATCH", 24, (247, 235, 210, 255), (228, 185, 129, 190), 352, True),
-        ("ORIGINAL SOUND BY ATANDRA CHAKRABORTY (BURO)", 22, (247, 235, 210, 255), None, 408, False),
-        ("CINEMA  AND  DIRECTION    SAYAN BHATTACHARYA", 22, (247, 235, 210, 255), None, 442, False),
-        ("VIDEO PRODUCED BY SAYAN BHATTACHARYA", 22, (247, 235, 210, 255), None, 476, False),
+        ("BETWEEN THE NOTES PRESENTS", "manrope", 18, 500, 0.075, graphite_teal, 92, True),
+        ("SHE", "cormorant", 112, 500, 0.22, ink_teal, 216, True),
+        ("COMPOSITION BY DRONE WATCH", "manrope", 20, 300, 0.055, graphite_teal, 276, False),
+        ("ORIGINAL SOUND BY ATANDRA CHAKRABORTY (BURO)", "manrope", 20, 300, 0.055, graphite_teal, 314, False),
+        ("CINEMA & DIRECTION — SAYAN BHATTACHARYA", "manrope", 20, 300, 0.055, graphite_teal, 352, False),
+        ("VIDEO PRODUCTION — SAYAN BHATTACHARYA", "manrope", 20, 300, 0.055, graphite_teal, 390, False),
     ]
     cards = []
-    for text, size, fill, rule, y, _ruled in specs:
-        scale = 2
-        font = _font(size * scale, light=False)
-        probe = ImageDraw.Draw(Image.new("RGB", (8, 8)))
-        box = probe.textbbox((0, 0), text, font=font)
-        tw, th = box[2] - box[0], box[3] - box[1]
-        pad = 16
-        words = Image.new("RGBA", (tw + pad * 2, th + pad * 2), (0, 0, 0, 0))
-        ImageDraw.Draw(words).text((pad - box[0], pad - box[1]), text, font=font, fill=fill,
-                                   stroke_width=6, stroke_fill=(12, 20, 24, 220))
-        words = words.resize((max(1, words.width // scale), max(1, words.height // scale)), Image.Resampling.LANCZOS)
-        line = None
-        if rule is not None:
-            span = max(240, (tw // scale)) if _ruled else 240
-            line = Image.new("RGBA", (span + 16, 8), (0, 0, 0, 0))
-            ImageDraw.Draw(line).rectangle([8, 2, 8 + span, 5], fill=rule)
-            line = np.asarray(line)
-        cards.append((np.asarray(words), line, 960 - words.width / 2, y - words.height / 2))
+    for text, family, size, weight, em_track, fill, baseline_y, has_divider in specs:
+        font = _load_editorial_font(family, size * 2, weight=weight)
+        plate, bl_offset = _render_tracked_line(text, font, fill, tracking_px=size * em_track)
+        rule = None
+        if has_divider:
+            rule = Image.new("RGBA", (340, 1), divider_col)
+            rule = np.asarray(rule)
+        cards.append((np.asarray(plate), rule, 960.0 - plate.width / 2.0, float(baseline_y) - bl_offset))
     return cards
 
 

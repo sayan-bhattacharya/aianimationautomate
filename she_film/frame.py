@@ -516,7 +516,14 @@ def render(plates, t):
     still = max(cover, water_stillness(t))
     frame[HORIZON:] = water.paint(base, t, lamps, stillness=still, audio_feats=plates.get("audio_feats"))
     if star_amount > 0.04:
-        actors.aurora_reflect(frame, t, star_amount, stillness=still)
+        actors.aurora_reflect(
+            frame,
+            t,
+            star_amount,
+            stillness=still,
+            audio_feats=plates.get("audio_feats"),
+            moon_body=moon_body,
+        )
     if mushroom_alpha > 0.02:
         actors.life_reflect(frame, plates, t, stillness=still)
     if forest_alpha > 0.02:
@@ -530,11 +537,25 @@ def render(plates, t):
         frame = frame * (1.0 - buddha_alpha) + plates["cosmic_demigod"] * buddha_alpha
         _render_buddha_waveform(frame, t, buddha_alpha, plates)
 
-    for (rule_a, text_a), (words, rule, x, y) in zip(title_lines(t), plates["titles"]):
+    for idx_t, ((rule_a, text_a), (words, rule, x, y)) in enumerate(zip(title_lines(t), plates["titles"])):
+        # Subtle 5px upward drift during each layer's fade-in (meditative settle)
+        drift_y = 5.0 * (1.0 - min(1.0, text_a)) if (8.0 <= t <= 14.5 and text_a > 0.02) else 0.0
         if rule is not None and rule_a > 0.02:
-            actors.over(frame, rule, x + (words.shape[1] - rule.shape[1]) / 2, y + words.shape[0] - 2, rule_a)
+            if idx_t == 0:
+                ry = 116.0 + drift_y
+                draw_prog = smooth((t - 9.5) / 1.1)
+            else:
+                # Animated underline beneath SHE expanding smoothly from center
+                ry = 232.0 + drift_y
+                draw_prog = smooth((t - 11.2) / 1.3)
+            rw = rule.shape[1]
+            vis_w = max(2, int(round(rw * draw_prog)))
+            c0 = (rw - vis_w) // 2
+            sub_rule = rule[:, c0:c0 + vis_w]
+            rx = x + (words.shape[1] - rw) / 2 + c0
+            actors.over(frame, sub_rule, rx, ry, rule_a)
         if text_a > 0.02:
-            actors.over(frame, words, x, y, text_a)
+            actors.over(frame, words, x, y + drift_y, text_a)
 
     actors.snow(frame, plates, t, snow_amount(t), moon_body, None)
     actors.birds(frame, plates, t, birds(t), stillness=still)
