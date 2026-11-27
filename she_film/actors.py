@@ -571,35 +571,37 @@ def life(frame, plates, t, alpha=1.0):
                 0, 255
             ).astype(np.uint8)
 
-        # Draw firmly grounded mushroom sprite
-        over(frame, spr, x, y, alpha * a_fade)
+        # Clean bottom-edge rectangular pad fringe on mushroom sprite before compositing
+        spr_clean = spr.copy()
+        sh_m = spr_clean.shape[0]
+        pad_rows = max(4, int(sh_m * 0.16))
+        a_bot = spr_clean[-pad_rows:, :, 3]
+        a_bot[a_bot < 0.16] = 0.0
+        feather_rows = max(3, int(sh_m * 0.05))
+        spr_clean[-feather_rows:, :, 3] *= np.linspace(1.0, 0.0, feather_rows, dtype=np.float32)[:, None]
 
-        # Foreground Sand Dune Drift Lip / Sand Cradle:
-        # A soft organic sand drift that wraps in front of root tips with zero rectangular edges
-        lip_w = max(18, int(spr.shape[1] * 0.30))
-        lip_h = max(2, min(4, int(max_depth_to_water * 0.5)))
-        lip_mask = np.zeros((lip_h * 2 + 1, lip_w * 2 + 1), dtype=np.float32)
-        cv2.ellipse(lip_mask, (lip_w, lip_h), (lip_w, lip_h), 0, 0, 360, 1.0, -1)
-        lip_mask = cv2.GaussianBlur(lip_mask, (0, 0), max(1.0, lip_h * 0.5))
-        
-        lx0 = max(0, int(x + spr.shape[1] // 2) - lip_w)
-        lx1 = min(WIDTH, int(x + spr.shape[1] // 2) + lip_w + 1)
+        # Capture live dune pixels BEFORE drawing sprite for dynamic ground occlusion
+        lip_w = max(18, int(spr_clean.shape[1] * 0.30))
+        lip_h = max(3, min(6, int(max_depth_to_water * 0.6)))
+        lx0 = max(0, int(x + spr_clean.shape[1] // 2) - lip_w)
+        lx1 = min(WIDTH, int(x + spr_clean.shape[1] // 2) + lip_w + 1)
         ly0 = max(0, ground_y - lip_h)
         ly1 = min(HORIZON, ground_y + lip_h + 1)
-        if ly1 > ly0 and lx1 > lx0:
+        bg_dune = frame[ly0:ly1, lx0:lx1].copy() if (ly1 > ly0 and lx1 > lx0) else None
+
+        # Draw firmly grounded mushroom sprite
+        over(frame, spr_clean, x, y, alpha * a_fade)
+
+        # Dynamic Live-Dune Occlusion Mask: blends the actual lit dune pixels back over root tips
+        if bg_dune is not None:
+            lip_mask = np.zeros((lip_h * 2 + 1, lip_w * 2 + 1), dtype=np.float32)
+            cv2.ellipse(lip_mask, (lip_w, lip_h), (lip_w, lip_h), 0, 0, 360, 1.0, -1)
+            lip_mask = cv2.GaussianBlur(lip_mask, (0, 0), max(1.2, lip_h * 0.55))
             patch = lip_mask[(ly0 - (ground_y - lip_h)):(ly1 - (ground_y - lip_h)),
-                             (lx0 - (int(x + spr.shape[1] // 2) - lip_w)):(lx1 - (int(x + spr.shape[1] // 2) - lip_w))]
-            day, warm, night = sky_weights(t)
-            dune_sand_color = np.array([
-                186.0 * warm + 150.0 * day + 42.0 * night,
-                96.0 * warm + 142.0 * day + 40.0 * night,
-                64.0 * warm + 160.0 * day + 68.0 * night
-            ], dtype=np.float32)
-            sand_crest = np.array([24.0 * warm + 14.0 * day + 6.0 * night, 14.0 * warm + 10.0 * day + 6.0 * night, 8.0 * warm + 6.0 * day + 10.0 * night], dtype=np.float32)
-            sand_lip_col = dune_sand_color + sand_crest
+                             (lx0 - (int(x + spr_clean.shape[1] // 2) - lip_w)):(lx1 - (int(x + spr_clean.shape[1] // 2) - lip_w))]
+            blend_a = patch[:, :, None] * (0.85 * alpha * a_fade)
             frame_patch = frame[ly0:ly1, lx0:lx1].astype(np.float32)
-            blend_a = patch[:, :, None] * (0.82 * alpha * a_fade)
-            frame[ly0:ly1, lx0:lx1] = np.clip(frame_patch * (1.0 - blend_a) + sand_lip_col * blend_a, 0, 255).astype(np.uint8)
+            frame[ly0:ly1, lx0:lx1] = np.clip(frame_patch * (1.0 - blend_a) + bg_dune.astype(np.float32) * blend_a, 0, 255).astype(np.uint8)
 
 
 def life_reflect(frame, plates, t, stillness=0.0):
@@ -848,7 +850,12 @@ def forest(frame, plates, t, presence, decay=0.0, depth_layers=None, respect_rid
                 sprite = cv2.resize(sprite, (bw, bh), interpolation=cv2.INTER_LINEAR)
                 soil_offset += h - bh
                 w, h = bw, bh
-        # Seat root base 5px into the soil so root spurs firmly penetrate the beach sand
+        # Seat root base 5px into the soil and strip faint rectangular bounding-box pad fringes
+        pad_rows = max(4, int(h * 0.18))
+        bot_alpha = sprite[-pad_rows:, :, 3]
+        bot_alpha[bot_alpha < 0.16] = 0.0
+        feather_rows = max(3, int(h * 0.04))
+        sprite[-feather_rows:, :, 3] *= np.linspace(1.0, 0.0, feather_rows, dtype=np.float32)[:, None]
         left, top = int(x - w / 2), ground_y - root_row + 5 + soil_offset
 
         # Seamless Root Integration into Beach Soil:
@@ -1172,14 +1179,6 @@ def beasts(frame, plates, herd, t=0.0):
                 _draw_soft_dino_shadow(frame, x + shadow_dx, ground + shadow_dy * 0.35, shad_rx, shad_ry, shadow_tint, opacity=0.44)
                 sy = ground - hh + 6
                 over(frame, hero_spr, x - hw / 2, sy, 0.98 * _edge_presence(x, hw))
-                
-                # Falling foliage nibbles during canopy grazing sync with piano roll
-                if 258.0 <= t <= 288.0 and neck_bend > 0.3:
-                    for k in range(3):
-                        ly = int(sy + 40 + ((t * 22 + k * 7 + piano_onset * 5) % 25))
-                        lx = int(x + hw * 0.28 + math.sin(t * 7 + k) * 6)
-                        if 0 <= lx < WIDTH and 0 <= ly < HEIGHT:
-                            cv2.circle(frame, (lx, ly), 2, (75, 138, 55), -1)
             else:
                 sprite_y = ground - 280 + 4
                 shadow_dx, shadow_dy, shadow_tint = _celestial_shadow(x, t, scale=0.45)
