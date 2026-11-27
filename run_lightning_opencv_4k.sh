@@ -18,11 +18,11 @@ export PYTHONPATH="$REPO:${PYTHONPATH:-}"
 echo "=== 2. Generating Screens Cache ==="
 python3 -m she_film.generate_screens_cache
 
-echo "=== 3. Rendering 10 Chunks (10,680 frames) with Self-Healing Resume ==="
+echo "=== 3. Rendering 10 Chunks in Parallel (Multi-Core + Self-Healing Resume) ==="
 python3 - <<'PY'
+import multiprocessing as mp
 import os, shutil, subprocess
 import cv2, numpy as np
-from she_film import frame, plates
 from she_film.clock import FPS, HEIGHT, TOTAL_FRAMES, WIDTH
 
 BASE = "/teamspace/studios/this_studio"
@@ -32,27 +32,41 @@ REPO = os.path.join(BASE, "aianimationautomate")
 OUT_DIR = os.path.join(BASE, "SHE_Film_4K_OpenCV")
 CHUNKS_DIR = os.path.join(OUT_DIR, "chunks_1080p")
 
-p = plates.load()
 CHUNK_SIZE = 1068
 n_chunks = (TOTAL_FRAMES + CHUNK_SIZE - 1) // CHUNK_SIZE
-chunk_paths = []
+chunk_paths = [os.path.join(CHUNKS_DIR, f"chunk_{ci+1:02d}.mp4") for ci in range(n_chunks)]
 
-for ci in range(n_chunks):
+_PLATES = None
+def _init_worker():
+    global _PLATES
+    cv2.setNumThreads(1)
+    from she_film import plates
+    _PLATES = plates.load()
+
+def _render_chunk(ci):
+    from she_film import frame
     f0 = ci * CHUNK_SIZE
     f1 = min(TOTAL_FRAMES, f0 + CHUNK_SIZE)
-    c_path = os.path.join(CHUNKS_DIR, f"chunk_{ci+1:02d}.mp4")
-    chunk_paths.append(c_path)
+    c_path = chunk_paths[ci]
     if os.path.exists(c_path) and os.path.getsize(c_path) > 100_000:
         print(f"Skipping completed chunk {ci+1:02d}", flush=True)
-        continue
+        return c_path
     tmp_c = os.path.join(OUT_DIR, f"tmp_chunk_{ci+1:02d}.mp4")
     vw = cv2.VideoWriter(tmp_c, cv2.VideoWriter_fourcc(*"mp4v"), FPS, (WIDTH, HEIGHT))
     for fi in range(f0, f1):
-        rgb = frame.render(p, fi / FPS)
+        rgb = frame.render(_PLATES, fi / FPS)
         vw.write(cv2.cvtColor(np.clip(rgb, 0, 255).astype(np.uint8), cv2.COLOR_RGB2BGR))
     vw.release()
     shutil.move(tmp_c, c_path)
     print(f"✓ Saved chunk {ci+1:02d}/{n_chunks}: {c_path}", flush=True)
+    return c_path
+
+pending = [ci for ci, p in enumerate(chunk_paths) if not (os.path.exists(p) and os.path.getsize(p) > 100_000)]
+workers = max(1, min(4, os.cpu_count() or 2, len(pending) or 1))
+print(f"CPU cores: {os.cpu_count()} | Parallel workers: {workers} | Pending chunks: {len(pending)}/{n_chunks}", flush=True)
+if pending:
+    with mp.Pool(processes=workers, initializer=_init_worker) as pool:
+        pool.map(_render_chunk, pending)
 
 concat_txt = os.path.join(OUT_DIR, "concat_4k.txt")
 with open(concat_txt, "w") as f:
